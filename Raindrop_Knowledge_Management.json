@@ -1,0 +1,444 @@
+{
+  "name": "Raindrop 知識自動整理",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "38e23f9f-eb33-4e32-8d50-bc74c78c5cd7",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1320,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.raindrop.io/rest/v1/raindrops/0",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "raindropOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "sort",
+              "value": "-created"
+            },
+            {
+              "name": "perpage",
+              "value": "10"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "73d98034-8afc-48ee-a90b-8b73cf6c96ba",
+      "name": "取得 Raindrop 收藏",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -1100,
+        100
+      ],
+      "credentials": {
+        "raindropOAuth2Api": {
+          "id": "DHVo1hH1GwKY8qn9",
+          "name": "Raindrop account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 30分鐘觸發對應的篩選邏輯\nconst items = $input.all();\nconst response = items[0].json;\nconst newItems = [];\n\n// 觸發間隔 30 分鐘，時間窗口設為 35 分鐘（多 5 分鐘緩衝）\nconst scheduleInterval = 30; // 分鐘\nconst timeWindow = (scheduleInterval + 5) * 60 * 1000; // 35 分鐘\nconst cutoffTime = Date.now() - timeWindow;\n\nconsole.log(`檢查 ${response.items?.length || 0} 個收藏項目`);\nconsole.log(`時間窗口：最近 ${scheduleInterval + 5} 分鐘`);\nconsole.log(`截止時間：${new Date(cutoffTime).toLocaleString('zh-TW')}`);\n\n// 按建立時間排序，最新的在前面\nconst sortedItems = (response.items || []).sort((a, b) => {\n  return new Date(b.created).getTime() - new Date(a.created).getTime();\n});\n\nfor (const item of sortedItems) {\n  const createdTime = new Date(item.created).getTime();\n  const minutesAgo = Math.round((Date.now() - createdTime) / (60 * 1000));\n  \n  if (createdTime > cutoffTime) {\n    newItems.push({\n      id: item._id,\n      title: item.title || '無標題',\n      link: item.link,\n      excerpt: item.excerpt || '',\n      tags: item.tags || [],\n      created: item.created,\n      domain: item.domain || '',\n      type: item.type || 'link',\n      minutesAgo: minutesAgo\n    });\n    \n    console.log(`✅ 新項目：${item.title} (${minutesAgo} 分鐘前)`);\n  } else {\n    console.log(`⏭️ 跳過舊項目：${item.title} (${minutesAgo} 分鐘前，超過 35 分鐘)`);\n  }\n}\n\n// 限制每次最多處理 5 個項目（避免突然大量處理）\nconst maxItems = 5;\nconst finalItems = newItems.slice(0, maxItems);\n\nif (finalItems.length < newItems.length) {\n  console.log(`📝 限制處理數量：${finalItems.length}/${newItems.length} 個項目`);\n}\n\nif (finalItems.length === 0) {\n  console.log('📭 沒有符合時間窗口的新收藏項目');\n  return [];\n}\n\nconsole.log(`🎯 發現 ${finalItems.length} 個新項目準備處理`);\nreturn finalItems.map(item => ({ json: item }));"
+      },
+      "id": "212687cf-dca8-4660-ae16-a5d85aee493b",
+      "name": "篩選新項目",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 處理內容 - 支援多筆資料處理\nconst items = $input.all();\nconst results = [];\n\nconsole.log(`📄 準備處理 ${items.length} 個項目的內容`);\n\n// 強化的文本清理函數 - 專門處理 JSON 相容性\nfunction sanitizeForJson(text) {\n  if (!text) return '';\n  \n  return text\n    // 移除所有控制字符\n    .replace(/[\\u0000-\\u001F\\u007F-\\u009F]/g, '')\n    // 處理 JSON 特殊字符\n    .replace(/\\\\/g, '\\\\\\\\')  // 反斜線\n    .replace(/\"/g, '\\\\\"')    // 雙引號\n    .replace(/'/g, \"\\\\'\")    // 單引號\n    // 統一處理換行和空白\n    .replace(/[\\r\\n\\t]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    // 移除 Markdown 特殊符號（保留內容）\n    .replace(/^#+\\s*/gm, '')  // 移除 # 標題符號\n    .replace(/\\*\\*(.*?)\\*\\*/g, '$1')  // 移除粗體標記\n    .replace(/\\*(.*?)\\*/g, '$1')  // 移除斜體標記\n    .replace(/`(.*?)`/g, '$1')  // 移除程式碼標記\n    .replace(/---+/g, '')  // 移除分隔線\n    // 清理多餘符號\n    .replace(/[{}[\\]]/g, '')  // 移除大括號和中括號\n    .trim();\n}\n\n// HTML 清理函數\nfunction cleanHtml(html) {\n  if (!html) return '';\n  \n  return html\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<nav[^>]*>[\\s\\S]*?<\\/nav>/gi, '')\n    .replace(/<footer[^>]*>[\\s\\S]*?<\\/footer>/gi, '')\n    .replace(/<aside[^>]*>[\\s\\S]*?<\\/aside>/gi, '')\n    .replace(/<header[^>]*>[\\s\\S]*?<\\/header>/gi, '')\n    .replace(/<div[^>]*class=\"[^\"]*ad[^\"]*\"[^>]*>[\\s\\S]*?<\\/div>/gi, '')\n    .replace(/<[^>]*>/g, ' ')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\s+/g, ' ')\n    .replace(/\\n+/g, '\\n')\n    .trim();\n}\n\nfunction extractTitle(html) {\n  const titleMatches = [\n    html.match(/<title[^>]*>([^<]+)<\\/title>/i),\n    html.match(/<h1[^>]*>([^<]+)<\\/h1>/i),\n    html.match(/<meta[^>]*property=\"og:title\"[^>]*content=\"([^\"]+)\"/i)\n  ];\n  \n  for (const match of titleMatches) {\n    if (match && match[1] && match[1].trim()) {\n      return match[1].trim().replace(/\\s+/g, ' ');\n    }\n  }\n  return '';\n}\n\nfunction extractDescription(html) {\n  const descMatches = [\n    html.match(/<meta[^>]*name=\"description\"[^>]*content=\"([^\"]+)\"/i),\n    html.match(/<meta[^>]*property=\"og:description\"[^>]*content=\"([^\"]+)\"/i)\n  ];\n  \n  for (const match of descMatches) {\n    if (match && match[1] && match[1].trim()) {\n      return match[1].trim().replace(/\\s+/g, ' ');\n    }\n  }\n  return '';\n}\n\nfunction detectContentType(url, content, domain) {\n  const lowerContent = (content || '').toLowerCase();\n  const lowerDomain = (domain || '').toLowerCase();\n  \n  if (lowerDomain.includes('reddit.com')) return '社群討論';\n  if (lowerDomain.includes('github.com')) return '開源專案';\n  if (lowerDomain.includes('medium.com') || lowerDomain.includes('dev.to')) return '技術文章';\n  if (lowerDomain.includes('stackoverflow.com')) return '技術問答';\n  if (lowerDomain.includes('youtube.com') || lowerDomain.includes('youtu.be')) return '影片教學';\n  if (lowerDomain.includes('twitter.com') || lowerDomain.includes('x.com')) return '社群討論';\n  if (lowerDomain.includes('facebook.com')) return '社群討論';\n  \n  if (lowerContent.includes('tutorial') || lowerContent.includes('教學')) return '教學';\n  if (lowerContent.includes('tool') || lowerContent.includes('工具')) return '工具';\n  if (lowerContent.includes('news') || lowerContent.includes('新聞')) return '新聞';\n  \n  return '技術文章';\n}\n\n// 處理每個項目\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i].json;\n  const html = item.data || '';\n  const originalData = items[i].json; // 現在就是當前項目的資料\n\n  console.log(`\\n📄 處理項目 ${i + 1}/${items.length}：${originalData.title}`);\n  console.log(`📊 抓取狀態：${item.fetchSuccess ? '成功' : '失敗'}`);\n\n  // 如果抓取失敗，使用 Raindrop 提供的資訊\n  if (!item.fetchSuccess && item.usedFallback) {\n    console.log(`📝 使用 Raindrop 摘要作為內容`);\n    \n    results.push({\n      json: {\n        // 原始資料\n        id: originalData.id,\n        title: sanitizeForJson(originalData.title || '無標題'),\n        link: originalData.link,\n        tags: originalData.tags || [],\n        domain: originalData.domain,\n        created: originalData.created,\n        raindropExcerpt: sanitizeForJson(originalData.excerpt || ''),\n        \n        // 處理後的內容\n        cleanContent: sanitizeForJson(originalData.excerpt || '無法取得內容，請直接查看原始連結'),\n        metaDescription: sanitizeForJson(originalData.excerpt || ''),\n        webTitle: sanitizeForJson(originalData.title || ''),\n        \n        // 內容分析\n        contentLength: (originalData.excerpt || '').length,\n        estimatedReadTime: 2, // 預設 2 分鐘\n        detectedType: detectContentType(originalData.link, originalData.excerpt, originalData.domain),\n        \n        // 決定是否使用 AI（保持原本邏輯）\n        useAI: false, // 內容不足，不使用 AI\n        \n        // 錯誤資訊\n        fetchError: item.fetchError,\n        processedAt: new Date().toISOString(),\n        minutesAfterCreation: originalData.minutesAgo\n      }\n    });\n    continue;\n  }\n\n  // 繼續處理成功抓取的內容\n  const cleanContent = cleanHtml(html);\n  const webTitle = extractTitle(html);\n  const metaDescription = extractDescription(html);\n\n  // 原本的 AI 判斷邏輯\n  const worthAnalyzing = cleanContent.length > 300 && \n                        cleanContent.length < 8000 && \n                        !originalData.domain.includes('twitter.com') &&\n                        !originalData.domain.includes('x.com');\n\n  console.log(`📊 內容長度：${cleanContent.length} 字元`);\n  console.log(`🤖 是否使用 AI：${worthAnalyzing ? '是' : '否'}`);\n\n  results.push({\n    json: {\n      id: originalData.id,\n      title: sanitizeForJson(originalData.title || webTitle || '無標題'),\n      link: originalData.link,\n      tags: originalData.tags || [],\n      domain: originalData.domain,\n      created: originalData.created,\n      raindropExcerpt: sanitizeForJson(originalData.excerpt || ''),\n      \n      cleanContent: sanitizeForJson(cleanContent.substring(0, 6000)),\n      metaDescription: sanitizeForJson(metaDescription),\n      webTitle: sanitizeForJson(webTitle),\n      \n      contentLength: cleanContent.length,\n      estimatedReadTime: Math.max(1, Math.ceil(cleanContent.split(' ').length / 200)),\n      detectedType: detectContentType(originalData.link, cleanContent, originalData.domain),\n      \n      useAI: worthAnalyzing, // 保持原本的邏輯判斷\n      \n      processedAt: new Date().toISOString(),\n      minutesAfterCreation: originalData.minutesAgo,\n      fetchedUrl: item.fetchedUrl\n    }\n  });\n}\n\nconsole.log(`\\n🎯 處理完成，共 ${results.length} 個項目`);\nreturn results;"
+      },
+      "id": "a674623f-0833-47de-9b45-d8fe8934e235",
+      "name": "處理內容",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "id": "useai-condition",
+              "leftValue": "={{$json.useAI}}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equal"
+              }
+            },
+            {
+              "id": "6e7af8d3-19a1-4d96-9dfd-c1db04007e35",
+              "leftValue": "={{ $json.useAI }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "d00e51a7-6a5d-4d55-928c-9ee6538a5145",
+              "leftValue": "={{ $json.useAI }}",
+              "rightValue": "f",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "ae18d0d1-b99a-45b2-9483-7fdffbd06a9a",
+      "name": "是否使用 AI 分析",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -260,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://demo-ai-svc-res929348950322.cognitiveservices.azure.com/openai/deployments/o4-mini/chat/completions?api-version=2025-01-01-preview",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "azureOpenAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"你是一個專業的內容分析師。請分析網頁內容並提供結構化分析。\\n\\n請以 JSON 格式回應：\\n{\\n  \\\"summary\\\": \\\"2-3句話的精要摘要\\\",\\n  \\\"keyPoints\\\": [\\\"重點1\\\", \\\"重點2\\\", \\\"重點3\\\"],\\n  \\\"suggestedTags\\\": [\\\"標籤1\\\", \\\"標籤2\\\", \\\"標籤3\\\"],\\n  \\\"priority\\\": \\\"高|中|低\\\",\\n  \\\"category\\\": \\\"技術文章|教學|工具|新聞|開源專案|技術問答|其他\\\",\\n  \\\"difficulty\\\": \\\"初級|中級|高級\\\",\\n  \\\"practicalValue\\\": \\\"高|中|低\\\",\\n  \\\"learningGoals\\\": [\\\"目標1\\\", \\\"目標2\\\"]\\n}\\n\\n用繁體中文回應。\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ '標題：' + ($json.title || 'N/A') + '\\\\n網站：' + ($json.domain || 'N/A') + '\\\\n描述：' + ($json.metaDescription || 'N/A') + '\\\\n類型：' + ($json.detectedType || 'N/A') + '\\\\n\\\\n內容：\\\\n' + ($json.cleanContent || 'N/A').substring(0, 3500) }}\"\n    }\n  ],\n  \"max_completion_tokens\": 1000\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "62e339a2-6e47-4235-a6a4-edc817a65ada",
+      "name": "Azure AI 內容分析",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        -40,
+        0
+      ],
+      "credentials": {
+        "azureOpenAiApi": {
+          "id": "CtgkMRzzV4whz91f",
+          "name": "Azure Open AI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 整合 AI 分析結果 - 支援多筆資料處理\nconst azureItems = $input.all();\nconst processedItems = $('處理內容').all();\n\nconsole.log(`🤖 準備整合 ${azureItems.length} 個 AI 分析結果`);\nconsole.log(`📄 原始處理項目數量：${processedItems.length}`);\n\nconst results = [];\n\n// 🏷️ 智能標籤清理和處理函數\nfunction cleanAndProcessTags(originalTags, suggestedTags) {\n  console.log('🏷️ 處理標籤：');\n  console.log('原始標籤:', originalTags);\n  console.log('建議標籤:', suggestedTags);\n  \n  // 合併所有標籤，確保都是陣列\n  const allTags = [\n    ...(Array.isArray(originalTags) ? originalTags : []),\n    ...(Array.isArray(suggestedTags) ? suggestedTags : [])\n  ];\n  \n  // 清理標籤函數\n  function cleanTag(tag) {\n    if (!tag || typeof tag !== 'string') return null;\n    \n    return tag\n      .trim()\n      // 移除 Reddit r/ 前綴\n      .replace(/^r\\//, '')\n      // 移除特殊字符，只保留中英文、數字、空格、連字符\n      .replace(/[^\\w\\s\\u4e00-\\u9fff-]/g, '')\n      // 移除多餘空格\n      .replace(/\\s+/g, ' ')\n      .trim()\n      // 限制長度\n      .substring(0, 50);\n  }\n  \n  // 處理並清理標籤\n  const cleanedTags = allTags\n    .map(cleanTag)\n    .filter(tag => tag && tag.length > 0) // 移除空標籤\n    .filter(tag => tag.length >= 2) // 移除太短的標籤\n    .map(tag => {\n      // 標準化常見標籤\n      const tagLower = tag.toLowerCase();\n      if (tagLower.includes('chatgpt')) return 'ChatGPT';\n      if (tagLower.includes('javascript') || tagLower === 'js') return 'JavaScript';\n      if (tagLower.includes('python')) return 'Python';\n      if (tagLower.includes('react')) return 'React';\n      if (tagLower.includes('vue')) return 'Vue';\n      if (tagLower.includes('node')) return 'Node.js';\n      if (tagLower.includes('frontend') || tagLower.includes('前端')) return '前端開發';\n      if (tagLower.includes('backend') || tagLower.includes('後端')) return '後端開發';\n      if (tagLower.includes('ai') || tagLower.includes('人工智慧')) return 'AI';\n      if (tagLower.includes('tutorial') || tagLower.includes('教學')) return '教學';\n      if (tagLower.includes('tool') || tagLower.includes('工具')) return '工具';\n      if (tagLower.includes('coding') || tagLower.includes('程式')) return '程式設計';\n      \n      return tag;\n    });\n  \n  // 去重並限制數量\n  const uniqueTags = [...new Set(cleanedTags)].slice(0, 6);\n  \n  console.log('✅ 清理後標籤:', uniqueTags);\n  return uniqueTags;\n}\n\n// 處理每個 Azure AI 回應\nfor (let i = 0; i < azureItems.length; i++) {\n  const azureResponse = azureItems[i].json;\n  const originalData = processedItems[i]?.json || {};\n\n  console.log(`\\n🤖 處理 AI 分析結果 ${i + 1}/${azureItems.length}`);\n  console.log(`📄 原始項目：${originalData?.title || '未知標題'}`);\n\n  let aiAnalysis;\n  try {\n    // Azure AI 回應在 choices[0].message.content\n    const aiContent = azureResponse.choices[0].message.content;\n    console.log('📝 AI 原始回應 (前100字):', aiContent.substring(0, 100));\n    \n    // 去除 ```json``` 包裝並提取 JSON\n    let jsonString = aiContent;\n    \n    // 如果內容被 ```json``` 包裝，提取 JSON 部分\n    const jsonMatch = aiContent.match(/```json\\s*([\\s\\S]*?)\\s*```/);\n    if (jsonMatch) {\n      jsonString = jsonMatch[1];\n      console.log('✂️ 提取出 JSON 部分');\n    } else {\n      // 如果沒有包裝，嘗試直接提取 JSON 物件\n      const directJsonMatch = aiContent.match(/\\{[\\s\\S]*\\}/);\n      if (directJsonMatch) {\n        jsonString = directJsonMatch[0];\n      }\n    }\n    \n    // 解析 JSON\n    aiAnalysis = JSON.parse(jsonString);\n    console.log('✅ AI 分析解析成功');\n    \n  } catch (error) {\n    console.log('❌ AI 回應解析失敗:', error.message);\n    console.log('🔍 原始回應 choices:', azureResponse.choices?.[0]);\n    \n    // 解析失敗時使用預設值\n    aiAnalysis = {\n      summary: originalData?.raindropExcerpt || originalData?.metaDescription || 'AI 分析失敗，請查看原始連結',\n      keyPoints: ['AI 解析錯誤', '使用基本資訊'],\n      suggestedTags: [],\n      priority: '中',\n      category: originalData?.detectedType || '其他',\n      difficulty: '中級',\n      practicalValue: '中',\n      learningGoals: ['查看原始內容']\n    };\n  }\n\n  // 處理標籤\n  const processedTags = cleanAndProcessTags(\n    originalData?.tags || [], \n    aiAnalysis?.suggestedTags || []\n  );\n\n  // 格式化重點列表\n  const formattedKeyPoints = (aiAnalysis?.keyPoints || ['無重點資訊'])\n    .filter(point => point && point.length > 0)\n    .map(point => `• ${point}`)\n    .join('\\n');\n\n  // 格式化學習目標\n  const formattedLearningGoals = (aiAnalysis?.learningGoals || ['學習新知識'])\n    .filter(goal => goal && goal.length > 0)\n    .map(goal => `🎯 ${goal}`)\n    .join('\\n');\n\n  // 確保所有必要欄位都有值\n  const finalData = {\n    // 基本資料\n    title: originalData?.title || '無標題',\n    url: originalData?.link || '',\n    summary: aiAnalysis?.summary || '無摘要',\n    keyPoints: formattedKeyPoints || '• 無重點資訊',\n    tags: processedTags,\n    priority: aiAnalysis?.priority || '中',\n    readingTime: originalData?.estimatedReadTime || 5,\n    category: aiAnalysis?.category || '其他',\n    difficulty: aiAnalysis?.difficulty || '中級',\n    domain: originalData?.domain || '',\n    collectedDate: originalData?.created || new Date().toISOString(),\n    status: '未讀',\n    analysisType: 'AI',\n    \n    // AI 特有的額外資訊\n    practicalValue: aiAnalysis?.practicalValue || '中',\n    learningGoals: formattedLearningGoals || '🎯 學習新知識',\n    \n    // API 使用資訊\n    tokensUsed: azureResponse?.usage?.total_tokens || 0,\n    aiModel: azureResponse?.model || 'o4-mini',\n    analysisTime: new Date().toISOString()\n  };\n\n  console.log(`📊 項目 ${i + 1} 最終整合資料:`);\n  console.log('標題:', finalData.title);\n  console.log('標籤:', finalData.tags);\n  console.log('分類:', finalData.category);\n  console.log('優先級:', finalData.priority);\n\n  results.push({ json: finalData });\n}\n\nconsole.log(`\\n🎯 AI 分析整合完成，共 ${results.length} 個項目`);\nreturn results;"
+      },
+      "id": "bf79b073-d486-4f15-aafa-29cfa9281284",
+      "name": "整合 AI 分析結果",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        180,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 基本分析 - 修正版本（處理單筆資料）\nconst data = $input.first().json;\n\nconsole.log(`📊 基本分析：${data?.title || '未知標題'}`);\n\n// 分析內容函數\nfunction analyzeContent(title, content, domain) {\n  let priority = '中';\n  let difficulty = '初級';\n  let tags = [];\n  \n  const text = ((title || '') + ' ' + (content || '')).toLowerCase();\n  const lowerDomain = (domain || '').toLowerCase();\n  \n  // 根據域名判斷\n  if (lowerDomain.includes('reddit.com')) {\n    tags.push('reddit', '社群討論');\n    if (text.includes('chatgptcoding') || text.includes('programming')) {\n      tags.push('程式設計');\n      difficulty = '中級';\n      priority = '高';\n    }\n  }\n  \n  if (lowerDomain.includes('facebook.com')) {\n    tags.push('facebook', '社群討論');\n    if (text.includes('ai') || text.includes('copilot')) {\n      tags.push('AI工具');\n      priority = '高';\n    }\n  }\n  \n  if (text.includes('webdev') || text.includes('javascript')) {\n    tags.push('前端開發');\n    difficulty = '中級';\n  }\n  \n  if (text.includes('machinelearning') || text.includes('ai')) {\n    tags.push('ai');\n    priority = '高';\n    difficulty = '高級';\n  }\n  \n  // 根據標題關鍵字\n  if (text.includes('tutorial') || text.includes('guide')) {\n    tags.push('教學');\n    priority = '高';\n  }\n  \n  if (text.includes('tool') || text.includes('library')) {\n    tags.push('工具');\n    priority = '中';\n  }\n  \n  return { priority, difficulty, tags };\n}\n\n// Reddit 內容特殊處理函數\nfunction analyzeRedditContent(title, domain, excerpt) {\n  let priority = '中';\n  let difficulty = '初級';\n  let tags = ['reddit', '社群討論'];\n  \n  const text = ((title || '') + ' ' + (excerpt || '')).toLowerCase();\n  \n  // 根據 subreddit 判斷\n  if (text.includes('chatgptcoding') || text.includes('programming')) {\n    tags.push('程式設計');\n    difficulty = '中級';\n    priority = '高';\n  }\n  \n  if (text.includes('webdev') || text.includes('javascript')) {\n    tags.push('前端開發');\n    difficulty = '中級';\n  }\n  \n  if (text.includes('machinelearning') || text.includes('ai')) {\n    tags.push('ai');\n    priority = '高';\n    difficulty = '高級';\n  }\n  \n  // 根據標題關鍵字\n  if (text.includes('tutorial') || text.includes('guide')) {\n    tags.push('教學');\n    priority = '高';\n  }\n  \n  if (text.includes('tool') || text.includes('library')) {\n    tags.push('工具');\n    priority = '中';\n  }\n  \n  return { priority, difficulty, tags };\n}\n\nconst analysis = (data?.domain || '').includes('reddit.com') \n  ? analyzeRedditContent(data?.title, data?.domain, data?.raindropExcerpt)\n  : analyzeContent(data?.title, data?.cleanContent, data?.domain);\n\nreturn {\n  title: data?.title || '無標題',\n  url: data?.link || '',\n  summary: data?.raindropExcerpt || data?.metaDescription || '社群討論串，建議直接查看原始連結了解詳細內容',\n  keyPoints: `• 社群討論內容\\n• 主題：${data?.title || '未知'}\\n• 建議直接瀏覽原始連結`,\n  tags: [...(data?.tags || []), ...analysis.tags],\n  priority: analysis.priority,\n  readingTime: data?.estimatedReadTime || 3,\n  category: data?.detectedType || '社群討論',\n  difficulty: analysis.difficulty,\n  domain: data?.domain || '',\n  collectedDate: data?.created || new Date().toISOString(),\n  status: '未讀',\n  analysisType: 'Basic'\n};"
+      },
+      "id": "33ac8759-d01a-47e4-b113-42acc56f8ff5",
+      "name": "基本分析",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "be013d4d-3a18-41b1-b88c-23f304f5fc5e",
+      "name": "合併分析結果",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [
+        400,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "1ff930aa1b1280278ff5d95c98ce3ffd",
+          "mode": ""
+        },
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "標題|title",
+              "title": "={{$json.title}}"
+            },
+            {
+              "key": "連結|url",
+              "urlValue": "={{$json.url}}"
+            },
+            {
+              "key": "摘要|rich_text",
+              "textContent": "={{$json.summary}}"
+            },
+            {
+              "key": "重點|rich_text",
+              "textContent": "={{$json.keyPoints}}"
+            },
+            {
+              "key": "標籤|multi_select",
+              "multiSelectValue": "={{$json.tags}}"
+            },
+            {
+              "key": "優先級|select",
+              "selectValue": "={{$json.priority}}"
+            },
+            {
+              "key": "預估閱讀時間|number",
+              "numberValue": "={{$json.readingTime}}"
+            },
+            {
+              "key": "分類|select",
+              "selectValue": "={{$json.category}}"
+            },
+            {
+              "key": "難度|select",
+              "selectValue": "={{$json.difficulty}}"
+            },
+            {
+              "key": "來源網站|rich_text",
+              "textContent": "={{$json.domain}}"
+            },
+            {
+              "key": "收藏日期|date",
+              "date": "={{$json.collectedDate}}"
+            },
+            {
+              "key": "狀態|select",
+              "selectValue": "={{$json.status}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4a79bacc-5bf7-4589-8fb0-887d8b45638b",
+      "name": "存入 Notion 資料庫",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2,
+      "position": [
+        620,
+        100
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "fD42oNugcqwX5Yhf",
+          "name": "Notion account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 強化版網頁抓取 - 處理多筆資料\nconst items = $input.all();\nconst results = [];\n\nconsole.log(`🌐 準備處理 ${items.length} 個項目`);\n\n// 為不同網站設定不同的抓取策略\nfunction getRequestConfig(url, domain) {\n  const baseConfig = {\n    url: url,\n    method: 'GET',\n    timeout: 30000,\n    sendHeaders: true,\n    headerParameters: {\n      parameters: [\n        {\n          name: 'User-Agent',\n          value: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'\n        },\n        {\n          name: 'Accept',\n          value: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8'\n        },\n        {\n          name: 'Accept-Language',\n          value: 'en-US,en;q=0.9,zh-TW;q=0.8,zh;q=0.7'\n        },\n        {\n          name: 'Accept-Encoding',\n          value: 'gzip, deflate, br'\n        },\n        {\n          name: 'Connection',\n          value: 'keep-alive'\n        },\n        {\n          name: 'Upgrade-Insecure-Requests',\n          value: '1'\n        }\n      ]\n    },\n    options: {\n      response: {\n        response: {\n          responseFormat: 'text'\n        }\n      }\n    }\n  };\n\n  // 針對特定網站的特殊處理\n  if (domain.includes('reddit.com')) {\n    // Reddit 特殊處理\n    baseConfig.headerParameters.parameters.push(\n      {\n        name: 'Referer',\n        value: 'https://www.reddit.com/'\n      },\n      {\n        name: 'DNT',\n        value: '1'\n      },\n      {\n        name: 'Sec-Fetch-Dest',\n        value: 'document'\n      },\n      {\n        name: 'Sec-Fetch-Mode',\n        value: 'navigate'\n      },\n      {\n        name: 'Sec-Fetch-Site',\n        value: 'same-origin'\n      }\n    );\n    \n    // 嘗試使用 old.reddit.com\n    if (!url.includes('old.reddit.com')) {\n      baseConfig.url = url.replace('www.reddit.com', 'old.reddit.com');\n      console.log(`🔄 改用 old.reddit.com：${baseConfig.url}`);\n    }\n  }\n  \n  if (domain.includes('twitter.com') || domain.includes('x.com')) {\n    // Twitter/X 特殊處理\n    baseConfig.headerParameters.parameters.push({\n      name: 'Referer',\n      value: 'https://twitter.com/'\n    });\n  }\n  \n  if (domain.includes('linkedin.com')) {\n    // LinkedIn 特殊處理\n    baseConfig.headerParameters.parameters.push({\n      name: 'Referer',\n      value: 'https://www.linkedin.com/'\n    });\n  }\n\n  return baseConfig;\n}\n\n// 處理每個項目\nfor (let i = 0; i < items.length; i++) {\n  const originalData = items[i].json;\n  const url = originalData.link;\n  const domain = originalData.domain || '';\n\n  console.log(`\\n📄 處理項目 ${i + 1}/${items.length}：${originalData.title}`);\n  console.log(`📍 網址：${url}`);\n  console.log(`🏠 域名：${domain}`);\n\n  // 取得請求設定\n  const requestConfig = getRequestConfig(url, domain);\n\n  try {\n    // 進行 HTTP 請求\n    const response = await $http.request(requestConfig);\n    \n    if (response.data) {\n      console.log(`✅ 成功抓取內容，長度：${response.data.length} 字元`);\n      results.push({\n        json: {\n          ...originalData,\n          data: response.data,\n          fetchSuccess: true,\n          fetchedUrl: requestConfig.url,\n          fetchTime: new Date().toISOString()\n        }\n      });\n    } else {\n      console.log(`⚠️ 回應為空`);\n      throw new Error('Empty response');\n    }\n    \n  } catch (error) {\n    console.log(`❌ 抓取失敗：${error.message}`);\n    \n    // 如果是 Reddit 且第一次嘗試失敗，嘗試不同的方法\n    if (domain.includes('reddit.com') && !requestConfig.url.includes('old.reddit.com')) {\n      console.log(`🔄 嘗試使用 old.reddit.com`);\n      \n      try {\n        const fallbackConfig = {\n          ...requestConfig,\n          url: url.replace('www.reddit.com', 'old.reddit.com').replace('reddit.com', 'old.reddit.com')\n        };\n        \n        const fallbackResponse = await $http.request(fallbackConfig);\n        \n        if (fallbackResponse.data) {\n          console.log(`✅ old.reddit.com 成功，長度：${fallbackResponse.data.length} 字元`);\n          results.push({\n            json: {\n              ...originalData,\n              data: fallbackResponse.data,\n              fetchSuccess: true,\n              fetchedUrl: fallbackConfig.url,\n              fetchTime: new Date().toISOString(),\n              fallbackUsed: 'old.reddit.com'\n            }\n          });\n          continue; // 成功後跳到下一個項目\n        }\n      } catch (fallbackError) {\n        console.log(`❌ old.reddit.com 也失敗：${fallbackError.message}`);\n      }\n    }\n    \n    // 如果抓取失敗，返回基本資訊，讓工作流程繼續\n    console.log(`📝 抓取失敗，使用 Raindrop 摘要作為後備`);\n    results.push({\n      json: {\n        ...originalData,\n        data: `<html><head><title>${originalData.title}</title><meta name=\"description\" content=\"${originalData.excerpt}\"></head><body><p>${originalData.excerpt}</p></body></html>`,\n        fetchSuccess: false,\n        fetchError: error.message,\n        fetchTime: new Date().toISOString(),\n        usedFallback: true\n      }\n    });\n  }\n}\n\nconsole.log(`\\n🎯 處理完成，共 ${results.length} 個項目`);\nreturn results;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        100
+      ],
+      "id": "8c532d33-dbd8-4593-98ec-87e15b955507",
+      "name": "抓取網頁內容"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "取得 Raindrop 收藏",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "取得 Raindrop 收藏": {
+      "main": [
+        [
+          {
+            "node": "篩選新項目",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "篩選新項目": {
+      "main": [
+        [
+          {
+            "node": "抓取網頁內容",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "處理內容": {
+      "main": [
+        [
+          {
+            "node": "是否使用 AI 分析",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "是否使用 AI 分析": {
+      "main": [
+        [
+          {
+            "node": "Azure AI 內容分析",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "基本分析",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Azure AI 內容分析": {
+      "main": [
+        [
+          {
+            "node": "整合 AI 分析結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "整合 AI 分析結果": {
+      "main": [
+        [
+          {
+            "node": "合併分析結果",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "基本分析": {
+      "main": [
+        [
+          {
+            "node": "合併分析結果",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "合併分析結果": {
+      "main": [
+        [
+          {
+            "node": "存入 Notion 資料庫",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "抓取網頁內容": {
+      "main": [
+        [
+          {
+            "node": "處理內容",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "1b50d27b-fab7-414a-b259-7eb7965ac354",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"
+  },
+  "id": "E1OK2GVGla40YBIp",
+  "tags": []
+}
