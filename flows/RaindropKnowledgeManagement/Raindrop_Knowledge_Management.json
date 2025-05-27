@@ -1,5 +1,5 @@
 {
-  "name": "Raindrop 知識自動整理",
+  "name": "Raindrop Knowledge Management",
   "nodes": [
     {
       "parameters": {
@@ -12,13 +12,13 @@
           ]
         }
       },
-      "id": "38e23f9f-eb33-4e32-8d50-bc74c78c5cd7",
+      "id": "6c84895f-7e29-4776-afc5-c6e290b13fc6",
       "name": "Schedule Trigger",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.1,
       "position": [
-        -1320,
-        100
+        -1680,
+        400
       ]
     },
     {
@@ -47,13 +47,13 @@
           }
         }
       },
-      "id": "73d98034-8afc-48ee-a90b-8b73cf6c96ba",
+      "id": "261cd63d-97ef-44dd-9899-7f0080689f77",
       "name": "取得 Raindrop 收藏",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        -1100,
-        100
+        -1460,
+        400
       ],
       "credentials": {
         "raindropOAuth2Api": {
@@ -66,26 +66,26 @@
       "parameters": {
         "jsCode": "// 30分鐘觸發對應的篩選邏輯\nconst items = $input.all();\nconst response = items[0].json;\nconst newItems = [];\n\n// 觸發間隔 30 分鐘，時間窗口設為 35 分鐘（多 5 分鐘緩衝）\nconst scheduleInterval = 30; // 分鐘\nconst timeWindow = (scheduleInterval + 5) * 60 * 1000; // 35 分鐘\nconst cutoffTime = Date.now() - timeWindow;\n\nconsole.log(`檢查 ${response.items?.length || 0} 個收藏項目`);\nconsole.log(`時間窗口：最近 ${scheduleInterval + 5} 分鐘`);\nconsole.log(`截止時間：${new Date(cutoffTime).toLocaleString('zh-TW')}`);\n\n// 按建立時間排序，最新的在前面\nconst sortedItems = (response.items || []).sort((a, b) => {\n  return new Date(b.created).getTime() - new Date(a.created).getTime();\n});\n\nfor (const item of sortedItems) {\n  const createdTime = new Date(item.created).getTime();\n  const minutesAgo = Math.round((Date.now() - createdTime) / (60 * 1000));\n  \n  if (createdTime > cutoffTime) {\n    newItems.push({\n      id: item._id,\n      title: item.title || '無標題',\n      link: item.link,\n      excerpt: item.excerpt || '',\n      tags: item.tags || [],\n      created: item.created,\n      domain: item.domain || '',\n      type: item.type || 'link',\n      minutesAgo: minutesAgo\n    });\n    \n    console.log(`✅ 新項目：${item.title} (${minutesAgo} 分鐘前)`);\n  } else {\n    console.log(`⏭️ 跳過舊項目：${item.title} (${minutesAgo} 分鐘前，超過 35 分鐘)`);\n  }\n}\n\n// 限制每次最多處理 5 個項目（避免突然大量處理）\nconst maxItems = 5;\nconst finalItems = newItems.slice(0, maxItems);\n\nif (finalItems.length < newItems.length) {\n  console.log(`📝 限制處理數量：${finalItems.length}/${newItems.length} 個項目`);\n}\n\nif (finalItems.length === 0) {\n  console.log('📭 沒有符合時間窗口的新收藏項目');\n  return [];\n}\n\nconsole.log(`🎯 發現 ${finalItems.length} 個新項目準備處理`);\nreturn finalItems.map(item => ({ json: item }));"
       },
-      "id": "212687cf-dca8-4660-ae16-a5d85aee493b",
+      "id": "dff50a0b-e500-424f-a30c-6520a1fcb180",
       "name": "篩選新項目",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -880,
-        100
+        -1240,
+        400
       ]
     },
     {
       "parameters": {
         "jsCode": "// 處理內容 - 支援多筆資料處理\nconst items = $input.all();\nconst results = [];\n\nconsole.log(`📄 準備處理 ${items.length} 個項目的內容`);\n\n// 強化的文本清理函數 - 專門處理 JSON 相容性\nfunction sanitizeForJson(text) {\n  if (!text) return '';\n  \n  return text\n    // 移除所有控制字符\n    .replace(/[\\u0000-\\u001F\\u007F-\\u009F]/g, '')\n    // 處理 JSON 特殊字符\n    .replace(/\\\\/g, '\\\\\\\\')  // 反斜線\n    .replace(/\"/g, '\\\\\"')    // 雙引號\n    .replace(/'/g, \"\\\\'\")    // 單引號\n    // 統一處理換行和空白\n    .replace(/[\\r\\n\\t]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    // 移除 Markdown 特殊符號（保留內容）\n    .replace(/^#+\\s*/gm, '')  // 移除 # 標題符號\n    .replace(/\\*\\*(.*?)\\*\\*/g, '$1')  // 移除粗體標記\n    .replace(/\\*(.*?)\\*/g, '$1')  // 移除斜體標記\n    .replace(/`(.*?)`/g, '$1')  // 移除程式碼標記\n    .replace(/---+/g, '')  // 移除分隔線\n    // 清理多餘符號\n    .replace(/[{}[\\]]/g, '')  // 移除大括號和中括號\n    .trim();\n}\n\n// HTML 清理函數\nfunction cleanHtml(html) {\n  if (!html) return '';\n  \n  return html\n    .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<nav[^>]*>[\\s\\S]*?<\\/nav>/gi, '')\n    .replace(/<footer[^>]*>[\\s\\S]*?<\\/footer>/gi, '')\n    .replace(/<aside[^>]*>[\\s\\S]*?<\\/aside>/gi, '')\n    .replace(/<header[^>]*>[\\s\\S]*?<\\/header>/gi, '')\n    .replace(/<div[^>]*class=\"[^\"]*ad[^\"]*\"[^>]*>[\\s\\S]*?<\\/div>/gi, '')\n    .replace(/<[^>]*>/g, ' ')\n    .replace(/&nbsp;/g, ' ')\n    .replace(/&amp;/g, '&')\n    .replace(/&lt;/g, '<')\n    .replace(/&gt;/g, '>')\n    .replace(/&quot;/g, '\"')\n    .replace(/&#39;/g, \"'\")\n    .replace(/\\s+/g, ' ')\n    .replace(/\\n+/g, '\\n')\n    .trim();\n}\n\nfunction extractTitle(html) {\n  const titleMatches = [\n    html.match(/<title[^>]*>([^<]+)<\\/title>/i),\n    html.match(/<h1[^>]*>([^<]+)<\\/h1>/i),\n    html.match(/<meta[^>]*property=\"og:title\"[^>]*content=\"([^\"]+)\"/i)\n  ];\n  \n  for (const match of titleMatches) {\n    if (match && match[1] && match[1].trim()) {\n      return match[1].trim().replace(/\\s+/g, ' ');\n    }\n  }\n  return '';\n}\n\nfunction extractDescription(html) {\n  const descMatches = [\n    html.match(/<meta[^>]*name=\"description\"[^>]*content=\"([^\"]+)\"/i),\n    html.match(/<meta[^>]*property=\"og:description\"[^>]*content=\"([^\"]+)\"/i)\n  ];\n  \n  for (const match of descMatches) {\n    if (match && match[1] && match[1].trim()) {\n      return match[1].trim().replace(/\\s+/g, ' ');\n    }\n  }\n  return '';\n}\n\nfunction detectContentType(url, content, domain) {\n  const lowerContent = (content || '').toLowerCase();\n  const lowerDomain = (domain || '').toLowerCase();\n  \n  if (lowerDomain.includes('reddit.com')) return '社群討論';\n  if (lowerDomain.includes('github.com')) return '開源專案';\n  if (lowerDomain.includes('medium.com') || lowerDomain.includes('dev.to')) return '技術文章';\n  if (lowerDomain.includes('stackoverflow.com')) return '技術問答';\n  if (lowerDomain.includes('youtube.com') || lowerDomain.includes('youtu.be')) return '影片教學';\n  if (lowerDomain.includes('twitter.com') || lowerDomain.includes('x.com')) return '社群討論';\n  if (lowerDomain.includes('facebook.com')) return '社群討論';\n  \n  if (lowerContent.includes('tutorial') || lowerContent.includes('教學')) return '教學';\n  if (lowerContent.includes('tool') || lowerContent.includes('工具')) return '工具';\n  if (lowerContent.includes('news') || lowerContent.includes('新聞')) return '新聞';\n  \n  return '技術文章';\n}\n\n// 處理每個項目\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i].json;\n  const html = item.data || '';\n  const originalData = items[i].json; // 現在就是當前項目的資料\n\n  console.log(`\\n📄 處理項目 ${i + 1}/${items.length}：${originalData.title}`);\n  console.log(`📊 抓取狀態：${item.fetchSuccess ? '成功' : '失敗'}`);\n\n  // 如果抓取失敗，使用 Raindrop 提供的資訊\n  if (!item.fetchSuccess && item.usedFallback) {\n    console.log(`📝 使用 Raindrop 摘要作為內容`);\n    \n    results.push({\n      json: {\n        // 原始資料\n        id: originalData.id,\n        title: sanitizeForJson(originalData.title || '無標題'),\n        link: originalData.link,\n        tags: originalData.tags || [],\n        domain: originalData.domain,\n        created: originalData.created,\n        raindropExcerpt: sanitizeForJson(originalData.excerpt || ''),\n        \n        // 處理後的內容\n        cleanContent: sanitizeForJson(originalData.excerpt || '無法取得內容，請直接查看原始連結'),\n        metaDescription: sanitizeForJson(originalData.excerpt || ''),\n        webTitle: sanitizeForJson(originalData.title || ''),\n        \n        // 內容分析\n        contentLength: (originalData.excerpt || '').length,\n        estimatedReadTime: 2, // 預設 2 分鐘\n        detectedType: detectContentType(originalData.link, originalData.excerpt, originalData.domain),\n        \n        // 決定是否使用 AI（保持原本邏輯）\n        useAI: false, // 內容不足，不使用 AI\n        \n        // 錯誤資訊\n        fetchError: item.fetchError,\n        processedAt: new Date().toISOString(),\n        minutesAfterCreation: originalData.minutesAgo\n      }\n    });\n    continue;\n  }\n\n  // 繼續處理成功抓取的內容\n  const cleanContent = cleanHtml(html);\n  const webTitle = extractTitle(html);\n  const metaDescription = extractDescription(html);\n\n  // 原本的 AI 判斷邏輯\n  const worthAnalyzing = cleanContent.length > 300 && \n                        cleanContent.length < 8000 && \n                        !originalData.domain.includes('twitter.com') &&\n                        !originalData.domain.includes('x.com');\n\n  console.log(`📊 內容長度：${cleanContent.length} 字元`);\n  console.log(`🤖 是否使用 AI：${worthAnalyzing ? '是' : '否'}`);\n\n  results.push({\n    json: {\n      id: originalData.id,\n      title: sanitizeForJson(originalData.title || webTitle || '無標題'),\n      link: originalData.link,\n      tags: originalData.tags || [],\n      domain: originalData.domain,\n      created: originalData.created,\n      raindropExcerpt: sanitizeForJson(originalData.excerpt || ''),\n      \n      cleanContent: sanitizeForJson(cleanContent.substring(0, 6000)),\n      metaDescription: sanitizeForJson(metaDescription),\n      webTitle: sanitizeForJson(webTitle),\n      \n      contentLength: cleanContent.length,\n      estimatedReadTime: Math.max(1, Math.ceil(cleanContent.split(' ').length / 200)),\n      detectedType: detectContentType(originalData.link, cleanContent, originalData.domain),\n      \n      useAI: worthAnalyzing, // 保持原本的邏輯判斷\n      \n      processedAt: new Date().toISOString(),\n      minutesAfterCreation: originalData.minutesAgo,\n      fetchedUrl: item.fetchedUrl\n    }\n  });\n}\n\nconsole.log(`\\n🎯 處理完成，共 ${results.length} 個項目`);\nreturn results;"
       },
-      "id": "a674623f-0833-47de-9b45-d8fe8934e235",
+      "id": "c62e2b5a-0075-4df0-b324-0f85157dd187",
       "name": "處理內容",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -480,
-        100
+        -840,
+        400
       ]
     },
     {
@@ -132,13 +132,13 @@
         },
         "options": {}
       },
-      "id": "ae18d0d1-b99a-45b2-9483-7fdffbd06a9a",
+      "id": "bcfeaecb-58fa-4176-b72f-58460a9da6d5",
       "name": "是否使用 AI 分析",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        -260,
-        100
+        -620,
+        400
       ]
     },
     {
@@ -167,13 +167,13 @@
           }
         }
       },
-      "id": "62e339a2-6e47-4235-a6a4-edc817a65ada",
+      "id": "051e3887-da01-4337-ba78-8d79b24b02fd",
       "name": "Azure AI 內容分析",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.1,
       "position": [
-        -40,
-        0
+        -400,
+        300
       ],
       "credentials": {
         "azureOpenAiApi": {
@@ -186,37 +186,37 @@
       "parameters": {
         "jsCode": "// 整合 AI 分析結果 - 支援多筆資料處理\nconst azureItems = $input.all();\nconst processedItems = $('處理內容').all();\n\nconsole.log(`🤖 準備整合 ${azureItems.length} 個 AI 分析結果`);\nconsole.log(`📄 原始處理項目數量：${processedItems.length}`);\n\nconst results = [];\n\n// 🏷️ 智能標籤清理和處理函數\nfunction cleanAndProcessTags(originalTags, suggestedTags) {\n  console.log('🏷️ 處理標籤：');\n  console.log('原始標籤:', originalTags);\n  console.log('建議標籤:', suggestedTags);\n  \n  // 合併所有標籤，確保都是陣列\n  const allTags = [\n    ...(Array.isArray(originalTags) ? originalTags : []),\n    ...(Array.isArray(suggestedTags) ? suggestedTags : [])\n  ];\n  \n  // 清理標籤函數\n  function cleanTag(tag) {\n    if (!tag || typeof tag !== 'string') return null;\n    \n    return tag\n      .trim()\n      // 移除 Reddit r/ 前綴\n      .replace(/^r\\//, '')\n      // 移除特殊字符，只保留中英文、數字、空格、連字符\n      .replace(/[^\\w\\s\\u4e00-\\u9fff-]/g, '')\n      // 移除多餘空格\n      .replace(/\\s+/g, ' ')\n      .trim()\n      // 限制長度\n      .substring(0, 50);\n  }\n  \n  // 處理並清理標籤\n  const cleanedTags = allTags\n    .map(cleanTag)\n    .filter(tag => tag && tag.length > 0) // 移除空標籤\n    .filter(tag => tag.length >= 2) // 移除太短的標籤\n    .map(tag => {\n      // 標準化常見標籤\n      const tagLower = tag.toLowerCase();\n      if (tagLower.includes('chatgpt')) return 'ChatGPT';\n      if (tagLower.includes('javascript') || tagLower === 'js') return 'JavaScript';\n      if (tagLower.includes('python')) return 'Python';\n      if (tagLower.includes('react')) return 'React';\n      if (tagLower.includes('vue')) return 'Vue';\n      if (tagLower.includes('node')) return 'Node.js';\n      if (tagLower.includes('frontend') || tagLower.includes('前端')) return '前端開發';\n      if (tagLower.includes('backend') || tagLower.includes('後端')) return '後端開發';\n      if (tagLower.includes('ai') || tagLower.includes('人工智慧')) return 'AI';\n      if (tagLower.includes('tutorial') || tagLower.includes('教學')) return '教學';\n      if (tagLower.includes('tool') || tagLower.includes('工具')) return '工具';\n      if (tagLower.includes('coding') || tagLower.includes('程式')) return '程式設計';\n      \n      return tag;\n    });\n  \n  // 去重並限制數量\n  const uniqueTags = [...new Set(cleanedTags)].slice(0, 6);\n  \n  console.log('✅ 清理後標籤:', uniqueTags);\n  return uniqueTags;\n}\n\n// 處理每個 Azure AI 回應\nfor (let i = 0; i < azureItems.length; i++) {\n  const azureResponse = azureItems[i].json;\n  const originalData = processedItems[i]?.json || {};\n\n  console.log(`\\n🤖 處理 AI 分析結果 ${i + 1}/${azureItems.length}`);\n  console.log(`📄 原始項目：${originalData?.title || '未知標題'}`);\n\n  let aiAnalysis;\n  try {\n    // Azure AI 回應在 choices[0].message.content\n    const aiContent = azureResponse.choices[0].message.content;\n    console.log('📝 AI 原始回應 (前100字):', aiContent.substring(0, 100));\n    \n    // 去除 ```json``` 包裝並提取 JSON\n    let jsonString = aiContent;\n    \n    // 如果內容被 ```json``` 包裝，提取 JSON 部分\n    const jsonMatch = aiContent.match(/```json\\s*([\\s\\S]*?)\\s*```/);\n    if (jsonMatch) {\n      jsonString = jsonMatch[1];\n      console.log('✂️ 提取出 JSON 部分');\n    } else {\n      // 如果沒有包裝，嘗試直接提取 JSON 物件\n      const directJsonMatch = aiContent.match(/\\{[\\s\\S]*\\}/);\n      if (directJsonMatch) {\n        jsonString = directJsonMatch[0];\n      }\n    }\n    \n    // 解析 JSON\n    aiAnalysis = JSON.parse(jsonString);\n    console.log('✅ AI 分析解析成功');\n    \n  } catch (error) {\n    console.log('❌ AI 回應解析失敗:', error.message);\n    console.log('🔍 原始回應 choices:', azureResponse.choices?.[0]);\n    \n    // 解析失敗時使用預設值\n    aiAnalysis = {\n      summary: originalData?.raindropExcerpt || originalData?.metaDescription || 'AI 分析失敗，請查看原始連結',\n      keyPoints: ['AI 解析錯誤', '使用基本資訊'],\n      suggestedTags: [],\n      priority: '中',\n      category: originalData?.detectedType || '其他',\n      difficulty: '中級',\n      practicalValue: '中',\n      learningGoals: ['查看原始內容']\n    };\n  }\n\n  // 處理標籤\n  const processedTags = cleanAndProcessTags(\n    originalData?.tags || [], \n    aiAnalysis?.suggestedTags || []\n  );\n\n  // 格式化重點列表\n  const formattedKeyPoints = (aiAnalysis?.keyPoints || ['無重點資訊'])\n    .filter(point => point && point.length > 0)\n    .map(point => `• ${point}`)\n    .join('\\n');\n\n  // 格式化學習目標\n  const formattedLearningGoals = (aiAnalysis?.learningGoals || ['學習新知識'])\n    .filter(goal => goal && goal.length > 0)\n    .map(goal => `🎯 ${goal}`)\n    .join('\\n');\n\n  // 確保所有必要欄位都有值\n  const finalData = {\n    // 基本資料\n    title: originalData?.title || '無標題',\n    url: originalData?.link || '',\n    summary: aiAnalysis?.summary || '無摘要',\n    keyPoints: formattedKeyPoints || '• 無重點資訊',\n    tags: processedTags,\n    priority: aiAnalysis?.priority || '中',\n    readingTime: originalData?.estimatedReadTime || 5,\n    category: aiAnalysis?.category || '其他',\n    difficulty: aiAnalysis?.difficulty || '中級',\n    domain: originalData?.domain || '',\n    collectedDate: originalData?.created || new Date().toISOString(),\n    status: '未讀',\n    analysisType: 'AI',\n    \n    // AI 特有的額外資訊\n    practicalValue: aiAnalysis?.practicalValue || '中',\n    learningGoals: formattedLearningGoals || '🎯 學習新知識',\n    \n    // API 使用資訊\n    tokensUsed: azureResponse?.usage?.total_tokens || 0,\n    aiModel: azureResponse?.model || 'o4-mini',\n    analysisTime: new Date().toISOString()\n  };\n\n  console.log(`📊 項目 ${i + 1} 最終整合資料:`);\n  console.log('標題:', finalData.title);\n  console.log('標籤:', finalData.tags);\n  console.log('分類:', finalData.category);\n  console.log('優先級:', finalData.priority);\n\n  results.push({ json: finalData });\n}\n\nconsole.log(`\\n🎯 AI 分析整合完成，共 ${results.length} 個項目`);\nreturn results;"
       },
-      "id": "bf79b073-d486-4f15-aafa-29cfa9281284",
+      "id": "b0488b17-d26d-4b1b-b16c-9033b81f1418",
       "name": "整合 AI 分析結果",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        180,
-        0
+        -180,
+        300
       ]
     },
     {
       "parameters": {
         "jsCode": "// 基本分析 - 修正版本（處理單筆資料）\nconst data = $input.first().json;\n\nconsole.log(`📊 基本分析：${data?.title || '未知標題'}`);\n\n// 分析內容函數\nfunction analyzeContent(title, content, domain) {\n  let priority = '中';\n  let difficulty = '初級';\n  let tags = [];\n  \n  const text = ((title || '') + ' ' + (content || '')).toLowerCase();\n  const lowerDomain = (domain || '').toLowerCase();\n  \n  // 根據域名判斷\n  if (lowerDomain.includes('reddit.com')) {\n    tags.push('reddit', '社群討論');\n    if (text.includes('chatgptcoding') || text.includes('programming')) {\n      tags.push('程式設計');\n      difficulty = '中級';\n      priority = '高';\n    }\n  }\n  \n  if (lowerDomain.includes('facebook.com')) {\n    tags.push('facebook', '社群討論');\n    if (text.includes('ai') || text.includes('copilot')) {\n      tags.push('AI工具');\n      priority = '高';\n    }\n  }\n  \n  if (text.includes('webdev') || text.includes('javascript')) {\n    tags.push('前端開發');\n    difficulty = '中級';\n  }\n  \n  if (text.includes('machinelearning') || text.includes('ai')) {\n    tags.push('ai');\n    priority = '高';\n    difficulty = '高級';\n  }\n  \n  // 根據標題關鍵字\n  if (text.includes('tutorial') || text.includes('guide')) {\n    tags.push('教學');\n    priority = '高';\n  }\n  \n  if (text.includes('tool') || text.includes('library')) {\n    tags.push('工具');\n    priority = '中';\n  }\n  \n  return { priority, difficulty, tags };\n}\n\n// Reddit 內容特殊處理函數\nfunction analyzeRedditContent(title, domain, excerpt) {\n  let priority = '中';\n  let difficulty = '初級';\n  let tags = ['reddit', '社群討論'];\n  \n  const text = ((title || '') + ' ' + (excerpt || '')).toLowerCase();\n  \n  // 根據 subreddit 判斷\n  if (text.includes('chatgptcoding') || text.includes('programming')) {\n    tags.push('程式設計');\n    difficulty = '中級';\n    priority = '高';\n  }\n  \n  if (text.includes('webdev') || text.includes('javascript')) {\n    tags.push('前端開發');\n    difficulty = '中級';\n  }\n  \n  if (text.includes('machinelearning') || text.includes('ai')) {\n    tags.push('ai');\n    priority = '高';\n    difficulty = '高級';\n  }\n  \n  // 根據標題關鍵字\n  if (text.includes('tutorial') || text.includes('guide')) {\n    tags.push('教學');\n    priority = '高';\n  }\n  \n  if (text.includes('tool') || text.includes('library')) {\n    tags.push('工具');\n    priority = '中';\n  }\n  \n  return { priority, difficulty, tags };\n}\n\nconst analysis = (data?.domain || '').includes('reddit.com') \n  ? analyzeRedditContent(data?.title, data?.domain, data?.raindropExcerpt)\n  : analyzeContent(data?.title, data?.cleanContent, data?.domain);\n\nreturn {\n  title: data?.title || '無標題',\n  url: data?.link || '',\n  summary: data?.raindropExcerpt || data?.metaDescription || '社群討論串，建議直接查看原始連結了解詳細內容',\n  keyPoints: `• 社群討論內容\\n• 主題：${data?.title || '未知'}\\n• 建議直接瀏覽原始連結`,\n  tags: [...(data?.tags || []), ...analysis.tags],\n  priority: analysis.priority,\n  readingTime: data?.estimatedReadTime || 3,\n  category: data?.detectedType || '社群討論',\n  difficulty: analysis.difficulty,\n  domain: data?.domain || '',\n  collectedDate: data?.created || new Date().toISOString(),\n  status: '未讀',\n  analysisType: 'Basic'\n};"
       },
-      "id": "33ac8759-d01a-47e4-b113-42acc56f8ff5",
+      "id": "62463155-faaa-4f50-84e2-59e5e7b10b67",
       "name": "基本分析",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -40,
-        200
+        -400,
+        500
       ]
     },
     {
       "parameters": {},
-      "id": "be013d4d-3a18-41b1-b88c-23f304f5fc5e",
+      "id": "fb851800-7ffc-4622-9e24-466adaaa725c",
       "name": "合併分析結果",
       "type": "n8n-nodes-base.merge",
       "typeVersion": 2.1,
       "position": [
-        400,
-        100
+        40,
+        400
       ]
     },
     {
@@ -279,15 +279,549 @@
             }
           ]
         },
+        "blockUi": {
+          "blockValues": [
+            {
+              "type": "heading_1",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "={{$json.title}}",
+                    "annotationUi": {
+                      "bold": true,
+                      "color": "blue"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=🌐 來源：{{$json.domain}} | 📅 {{new Date($json.collectedDate).toLocaleDateString('zh-TW')}} | ⏱️ {{$json.readingTime}}分鐘",
+                    "annotationUi": {
+                      "italic": true,
+                      "color": "gray"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "════════════════════════════════════════════════════",
+                    "annotationUi": {
+                      "color": "gray"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "💡 內容摘要",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "={{$json.summary}}",
+                    "annotationUi": {
+                      "color": "blue"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "📋 重點摘要",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "={{$json.keyPoints}}",
+                    "annotationUi": {}
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "🎯 學習目標",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "={{$json.learningGoals || '🎯 探索新知識與技能\\n🎯 提升專業能力\\n🎯 實際應用所學內容'}}",
+                    "annotationUi": {
+                      "color": "green"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "📊 內容詳細資訊",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bulleted_list_item",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=📚 分類：{{$json.category}}",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bulleted_list_item",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=⚡ 優先級：{{$json.priority}}",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bulleted_list_item",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=📈 難度等級：{{$json.difficulty}}",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bulleted_list_item",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=⏱️ 預估閱讀時間：{{$json.readingTime}} 分鐘",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bulleted_list_item",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=🤖 分析方式：{{$json.analysisType}}",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "🏷️ 相關標籤",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=={{$json.tags.join(' • ')}}",
+                    "annotationUi": {
+                      "code": true,
+                      "color": "purple"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "════════════════════════════════════════════════════",
+                    "annotationUi": {
+                      "color": "gray"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "✅ 學習進度追蹤",
+                    "annotationUi": {
+                      "bold": true,
+                      "color": "green"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "to_do",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "📖 初步瀏覽內容",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "to_do",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "🔍 深入閱讀理解",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "to_do",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "💡 掌握核心概念",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "to_do",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "🛠️ 動手實作練習",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "to_do",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "📝 整理學習筆記",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "to_do",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "🔄 複習並應用",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "📝 我的學習筆記",
+                    "annotationUi": {
+                      "bold": true,
+                      "color": "yellow"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "💭 在這裡記錄你的學習心得、重要發現和個人思考...",
+                    "annotationUi": {
+                      "italic": true,
+                      "color": "gray"
+                    }
+                  }
+                ]
+              }
+            },
+            {},
+            {},
+            {
+              "type": "heading_3",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "🤔 學習過程中的問題與思考",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bulleted_list_item"
+            },
+            {
+              "type": "bulleted_list_item"
+            },
+            {
+              "type": "heading_3",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "💡 實作想法與應用計畫",
+                    "annotationUi": {
+                      "bold": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bulleted_list_item"
+            },
+            {
+              "type": "bulleted_list_item"
+            },
+            {
+              "type": "heading_3",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "════════════════════════════════════════════════════",
+                    "annotationUi": {
+                      "color": "gray"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_2",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "🔗 原始內容連結",
+                    "annotationUi": {
+                      "bold": true,
+                      "color": "blue"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=🔗 點擊查看原始文章：{{$json.title}}",
+                    "isLink": true,
+                    "textLink": "={{$json.url}}",
+                    "annotationUi": {
+                      "bold": true,
+                      "underline": true,
+                      "color": "blue"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=🌐 網址：{{$json.url}}",
+                    "annotationUi": {
+                      "code": true,
+                      "color": "gray"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "heading_3",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "ℹ️ 系統資訊",
+                    "annotationUi": {
+                      "color": "gray"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bulleted_list_item",
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "=📅 收藏時間：{{new Date($json.collectedDate).toLocaleString('zh-TW')}}",
+                    "annotationUi": {
+                      "code": true
+                    }
+                  },
+                  {
+                    "text": "=🤖 AI 模型：{{$json.aiModel || 'N/A'}}",
+                    "annotationUi": {
+                      "code": true
+                    }
+                  },
+                  {
+                    "text": "=🔢 Token 使用量：{{$json.tokensUsed || 0}}",
+                    "annotationUi": {
+                      "code": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "richText": true,
+              "text": {
+                "text": [
+                  {
+                    "text": "🤖 此頁面由 AI 自動生成分析，包含智能標籤、重點摘要和個人化學習建議。歡迎在筆記區域記錄你的想法！",
+                    "annotationUi": {
+                      "italic": true,
+                      "color": "gray"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
         "options": {}
       },
-      "id": "4a79bacc-5bf7-4589-8fb0-887d8b45638b",
+      "id": "3be53dbd-e356-4957-b2fc-b0be0b1590ce",
       "name": "存入 Notion 資料庫",
       "type": "n8n-nodes-base.notion",
       "typeVersion": 2,
       "position": [
-        620,
-        100
+        260,
+        400
       ],
       "credentials": {
         "notionApi": {
@@ -303,10 +837,10 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -680,
-        100
+        -1040,
+        400
       ],
-      "id": "8c532d33-dbd8-4593-98ec-87e15b955507",
+      "id": "a2adc7a9-b643-42a3-a904-bf77dccde236",
       "name": "抓取網頁內容"
     }
   ],
@@ -434,11 +968,30 @@
   "settings": {
     "executionOrder": "v1"
   },
-  "versionId": "1b50d27b-fab7-414a-b259-7eb7965ac354",
+  "versionId": "7f2db0e4-5103-4b3b-9897-deb9ac3d8165",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"
   },
   "id": "E1OK2GVGla40YBIp",
-  "tags": []
+  "tags": [
+    {
+      "name": "raindrop",
+      "id": "67ge26Co3u11nufo",
+      "createdAt": "2025-05-27T17:26:59.646Z",
+      "updatedAt": "2025-05-27T17:26:59.646Z"
+    },
+    {
+      "name": "notion",
+      "id": "jJONDkvSm8dw29BK",
+      "createdAt": "2025-05-27T17:27:01.909Z",
+      "updatedAt": "2025-05-27T17:27:01.909Z"
+    },
+    {
+      "name": "knowledge",
+      "id": "qU6ml7ppBu4zvXak",
+      "createdAt": "2025-05-27T17:27:08.636Z",
+      "updatedAt": "2025-05-27T17:27:08.636Z"
+    }
+  ]
 }
