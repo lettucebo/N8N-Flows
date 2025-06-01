@@ -1,14 +1,28 @@
 # CHANGELOG
 
+## [1.0.3] - 2025-06-01
+### Enhancements
+- Updated **Slack to Google Calendar AI Assistant**:
+  - Improved AI prompt for better detection and processing of complex event types.
+  - Enhanced structured event descriptions with detailed formatting.
+  - Configured reminders for both all-day and timed events.
+  - Improved notification messages with better formatting and details.
+  - Changed calendar events to auto-send invites (sendUpdates: all).
+  - Enhanced user experience with emoji and structured information.
+
+### Fixes
+- Resolved issues with Slack message filtering logic.
+- Fixed incorrect handling of all-day event date formats.
+
 ## [1.0.2] - 2025-06-01
 ### Enhancements
 - Improved **Slack to Google Calendar AI Assistant**:
-  - Updated AI prompt to better detect and process complex event types
-  - Added structured event descriptions with detailed formatting
-  - Configured reminders for both all-day and timed events
-  - Improved notification messages with better formatting and details
-  - Set calendar events to not auto-send invites (sendUpdates: none)
-  - Enhanced user experience with emoji and structured information
+  - Updated AI prompt to better detect and process complex event types.
+  - Added structured event descriptions with detailed formatting.
+  - Configured reminders for both all-day and timed events.
+  - Improved notification messages with better formatting and details.
+  - Set calendar events to not auto-send invites (sendUpdates: none).
+  - Enhanced user experience with emoji and structured information.
 - Added VS Code settings and configuration files
 
 ## [1.0.1] - 2025-05-29
