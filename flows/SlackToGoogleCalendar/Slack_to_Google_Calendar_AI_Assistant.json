@@ -95,7 +95,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 1,
       "position": [
-        1276,
+        1280,
         460
       ],
       "alwaysOutputData": false
@@ -110,13 +110,22 @@
         },
         "start": "={{$json.startDateTime}}",
         "end": "={{$json.endDateTime}}",
+        "useDefaultReminders": false,
         "additionalFields": {
           "allday": "yes",
           "description": "={{$json.description}}",
           "location": "={{$json.location}}",
           "maxAttendees": 50,
-          "sendUpdates": "all",
+          "sendUpdates": "none",
           "summary": "={{$json.title}}"
+        },
+        "remindersUi": {
+          "remindersValues": [
+            {
+              "method": "popup",
+              "minutes": 180
+            }
+          ]
         }
       },
       "id": "9b1a9087-efb1-4346-9680-09673497b489",
@@ -137,7 +146,7 @@
     {
       "parameters": {
         "channel": "=C08NVUQUK8F",
-        "text": "=✅ **日曆事件已成功創建！**  📅 **{{$json.summary}}** {{$json.start.date ?    '🗓️ 日期: ' + DateTime.fromFormat($json.start.date, 'yyyy-MM-dd').toFormat('MM月dd日 (cccc)', {locale: 'zh-TW'}) :    '🕐 時間: ' + DateTime.fromISO($json.start.dateTime).toFormat('MM月dd日 (cccc) HH:mm', {locale: 'zh-TW'}) + ' - ' + DateTime.fromISO($json.end.dateTime).toFormat('HH:mm', {locale: 'zh-TW'}) }} 📍 地點: {{$json.location || '未指定'}} {{$json.description ? '📝 備註: ' + $json.description.split('📋 來源信息：')[0].trim() : ''}}  🔗 [查看事件]({{$json.htmlLink}})  _🤖 由 AI 助手自動創建 • 事件ID: {{$json.id}}_",
+        "text": "=🎉 *行事曆事件創建成功！*\n\n📝 *{{$json.summary}}*\n\n🗓️ *活動類型：* {{$json.start.date ? '全天活動' : '定時活動'}}\n📅 *日期：* {{$json.start.date ? new Date($json.start.date + 'T12:00:00').toLocaleDateString('zh-TW', {year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long'}) : new Date($json.start.dateTime).toLocaleDateString('zh-TW', {timeZone: 'Asia/Taipei'})}}\n⏰ *時間：* {{$json.start.date ? '整天' : new Date($json.start.dateTime).toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Taipei'}) + ' - ' + new Date($json.end.dateTime).toLocaleTimeString('zh-TW', {hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Taipei'})}}\n📍 *地點：* {{$json.location || '未指定'}}\n\n📋 *活動詳情：*\n{{$json.description ? $json.description.substring(0, 300) + ($json.description.length > 300 ? '...' : '') : '請查看完整行事曆'}}\n\n🔗 [*查看完整行事曆事件*](<{{$json.htmlLink}}>)\n\n_🤖 由 AI 助手自動創建 • 事件ID: `{{$json.id}}`_\n_✨ 祝你活動順利愉快！ ✨_",
         "otherOptions": {},
         "attachments": []
       },
@@ -205,7 +214,7 @@
         "messages": {
           "messageValues": [
             {
-              "message": "=你是一個專業的日程管理助手。請分析用戶的 Slack 訊息，提取可能的日程信息。\n\n🔍 地點偵測規則（重要）：\n1. 移動動詞後的地點：\n   - 「去XX」、「到XX」、「往XX」、「赴XX」\n   - 「前往XX」、「出發到XX」、「飛往XX」\n   - 範例：「去名古屋玩」→ location: \"名古屋\"\n\n2. 位置介詞後的地點：\n   - 「在XX」、「於XX」、「位於XX」\n   - 「XX舉行」、「XX進行」、「XX召開」\n   - 範例：「在台北開會」→ location: \"台北\"\n\n3. 常見地點類型：\n   - 城市/國家：台北、東京、名古屋、新加坡、美國、日本\n   - 地標/景點：101大樓、迪士尼、故宮、富士山\n   - 場所：會議室A、咖啡廳、餐廳、辦公室、家裡\n   - 線上：Zoom、Teams、Google Meet、視訊、線上\n   - 建築：XX大樓、XX中心、XX館、XX廳\n\n4. 複合地點表達：\n   - 「台北101」→ location: \"台北101\"\n   - 「新竹科學園區」→ location: \"新竹科學園區\"\n   - 「會議室A」→ location: \"會議室A\"\n   - 「線上會議」→ location: \"線上\"\n\n5. 地點提取優先順序：\n   - 具體地址 > 建築名稱 > 城市名稱 > 區域名稱\n   - 如果有多個地點，選擇最具體的那個\n\n6. 特殊情況處理：\n   - 「XX玩」、「XX旅遊」、「XX出差」→ XX 是地點\n   - 「回XX」、「返回XX」→ XX 是地點\n   - 「XX見面」、「XX聚餐」→ XX 可能是地點\n\n全天活動識別規則：\n1. 旅遊活動：「去XX玩」、「XX旅遊」、「到XX」、「XX出差」\n2. 假期/休假：「請假」、「休假」、「放假」\n3. 節日/慶典：「生日」、「節日」、「活動日」\n4. 研習/課程：「研習營」、「工作坊」、「訓練營」\n5. 只提到日期沒有具體時間的活動\n\n部分時間活動識別規則：\n1. 會議：「開會」、「會議」、「討論」\n2. 簡報：「簡報」、「presentation」、「報告」\n3. 有明確時間的活動：「下午2點」、「早上」、「晚上」\n\n時間格式規則：\n- 全天活動：startDateTime 設為 \"YYYY-MM-DD\"（不包含時間部分）\n- 部分時間活動：使用完整的 ISO 8601 格式 \"YYYY-MM-DDTHH:mm:ss+08:00\"\n\n分析規則：\n1. 時間關鍵字：明天、下週、今天、具體日期、具體時間\n2. 活動關鍵字：會議、討論、簡報、培訓、研習、活動、玩、旅遊  \n3. 地點信息：會議室、地址、線上、視訊、城市名稱、建築名稱\n4. 參與者：@用戶名、職稱、部門\n5. 時間推斷：\n   - 「明天下午」→ 明天 14:00-15:00（部分時間）\n   - 「下週三開會」→ 下週三 09:00-10:00（部分時間）\n   - 「2點開會」→ 14:00-15:00（部分時間）\n   - 「去XX玩」→ 全天活動（純日期格式）\n   - 「XX研習營」→ 全天活動（純日期格式）\n   - 「請假」→ 全天活動（純日期格式）\n\n請按照以下 JSON 格式回覆，不要添加任何其他文字：\n{\n  \"hasEvent\": true,\n  \"events\": [\n    {\n      \"title\": \"事件標題\",\n      \"description\": \"詳細描述\",\n      \"startDateTime\": \"2025-05-20\",\n      \"endDateTime\": \"2025-05-20\",\n      \"isAllDay\": true,\n      \"location\": \"具體地點名稱\",\n      \"attendees\": [\"email1@example.com\"],\n      \"confidence\": 0.95\n    }\n  ],\n  \"reasoning\": \"分析原因，包含地點識別邏輯\"\n}\n\n地點偵測範例：\n- 「5/20 去名古屋玩」→ location: \"名古屋\"（從「去XX玩」提取）\n- 「明天在會議室A開會」→ location: \"會議室A\"（從「在XX」提取）\n- 「下週到台北出差」→ location: \"台北\"（從「到XX出差」提取）\n- 「6/15 東京迪士尼一日遊」→ location: \"東京迪士尼\"（複合地點）\n- 「線上會議討論專案」→ location: \"線上\"（虛擬地點）\n- 「在家工作」→ location: \"家裡\"（居家地點）\n- 「新竹科學園區參訪」→ location: \"新竹科學園區\"（園區地點）\n\n活動類型與地點範例：\n- 「5/20 去名古屋玩」→ 全天活動，startDateTime: \"2025-05-20\", endDateTime: \"2025-05-20\", isAllDay: true, location: \"名古屋\"\n- 「明天下午2點在會議室B簡報」→ 部分時間，startDateTime: \"2025-05-21T14:00:00+08:00\", endDateTime: \"2025-05-21T15:00:00+08:00\", isAllDay: false, location: \"會議室B\"\n- 「6/15 台北101研習營」→ 全天活動，startDateTime: \"2025-06-15\", endDateTime: \"2025-06-15\", isAllDay: true, location: \"台北101\"\n- 「下週三上午10點線上會議」→ 部分時間，startDateTime: \"2025-06-04T10:00:00+08:00\", endDateTime: \"2025-06-04T11:00:00+08:00\", isAllDay: false, location: \"線上\"\n\n信心度評估：\n- 0.9+: 完整時間+地點+活動類型明確\n- 0.7-0.9: 明確時間和活動，地點可推斷\n- 0.5-0.7: 模糊時間或活動類型，地點不明確\n- <0.5: 缺乏關鍵信息\n\n預設設定：\n- 時區：Asia/Taipei (+08:00)\n- 部分時間活動預設時長：1小時\n- 無具體時間的會議：09:00-10:00\n- 旅遊/休假/研習等：全天活動\n- 地點提取：優先提取最具體的地點信息\n\n現在請分析以下 Slack 訊息：「={{$json.text}}」\n\n⚠️ 重要：請特別注意地點信息的提取，確保不遺漏任何地點相關的詞語。\n\n請按照以下 JSON 格式回覆，不要添加任何其他文字：\n{\n  \"hasEvent\": true,\n  \"events\": [\n    {\n      \"title\": \"事件標題\",\n      \"description\": \"詳細描述\",\n      \"startDateTime\": \"2025-05-20\",\n      \"endDateTime\": \"2025-05-20\",\n      \"isAllDay\": true,\n      \"location\": \"地點（如果有）\",\n      \"attendees\": [\"email1@example.com\"],\n      \"confidence\": 0.95\n    }\n  ],\n  \"reasoning\": \"分析原因\"\n}\n\n範例：\n- 「5/20 去名古屋玩」→ 全天活動，startDateTime: \"2025-05-20\", endDateTime: \"2025-05-20\", isAllDay: true\n- 「明天下午2點開會」→ 部分時間，startDateTime: \"2025-05-21T14:00:00+08:00\", endDateTime: \"2025-05-21T15:00:00+08:00\", isAllDay: false\n- 「6/15 研習營」→ 全天活動，startDateTime: \"2025-06-15\", endDateTime: \"2025-06-15\", isAllDay: true\n\n信心度評估：\n- 0.9+: 完整時間+地點+活動類型明確\n- 0.7-0.9: 明確時間和活動，部分信息可推斷\n- 0.5-0.7: 模糊時間或活動類型\n- <0.5: 缺乏關鍵信息\n\n預設設定：\n- 時區：Asia/Taipei (+08:00)\n- 部分時間活動預設時長：1小時\n- 無具體時間的會議：09:00-10:00\n- 旅遊/休假/研習等：全天活動\n\n現在請分析以下 Slack 訊息：「={{$json.text}}」\n\n請仔細分析並提取日程信息，直接回覆 JSON 格式，不要包含 ```json 標記。"
+              "message": "=你是一個專業的日程管理助手。請分析用戶的 Slack 訊息，提取可能的日程信息。\n\n🎯 **重要原則：每個分析結果只產生一個主要事件，將所有相關活動整合為完整的活動描述**\n\n🔍 **地點偵測規則**：\n1. 移動動詞後的地點：「去XX」、「到XX」、「往XX」、「赴XX」、「前往XX」、「出發到XX」、「飛往XX」\n2. 位置介詞後的地點：「在XX」、「於XX」、「位於XX」、「XX舉行」、「XX進行」、「XX召開」\n3. 常見地點類型：城市/國家、地標/景點、場所、線上場所、建築物\n4. 地點提取優先順序：具體地址 > 建築名稱 > 城市名稱 > 區域名稱\n5. 多地點活動：選擇主要集合地點或最重要的地點作為主要 location\n\n📅 **活動類型識別（重要）**：\n- **全天活動**：\n  - 旅遊、一日遊、出差、休假、節日慶典\n  - 研習營、工作坊、訓練營\n  - 多地點行程活動（即使有集合時間也算全天活動）\n  - 只提到日期沒有具體時間\n- **定時活動**：\n  - 單一地點的會議、簡報\n  - 有明確開始和結束時間的短時間活動\n  - 非旅遊性質的定時聚會\n\n⏰ **時間格式規則**：\n- 全天活動：startDateTime 和 endDateTime 都設為 \"YYYY-MM-DD\"（不包含時間部分），isAllDay: true\n- 定時活動：使用完整的 ISO 8601 格式 \"YYYY-MM-DDTHH:mm:ss+08:00\"，isAllDay: false\n- **年份推斷規則**：\n  - 如果訊息中明確指定年份，使用該年份\n  - 如果只有月/日沒有年份，推斷邏輯：\n    - 若月份大於當前月份，使用當前年份\n    - 若月份小於當前月份，使用下一年份\n    - 若未指定年份且無法推斷，預設使用 2025 年\n- 時區：Asia/Taipei (+08:00)\n\n⚠️ **重要提醒**：\n- 旅遊、一日遊、多地點活動即使有集合時間，也應該設為全天活動\n- 全天活動的開始和結束時間應該相同，格式為純日期\n\n📋 **詳細描述內容建構**：\n必須包含以下資訊（如果訊息中有提及）：\n1. **集合資訊**：集合時間、集合地點、停車資訊\n2. **完整行程**：按時間順序列出所有活動安排\n3. **費用明細**：各項費用（交通、餐費、門票等）\n4. **參與者資訊**：車手安排、參加人員\n5. **攜帶物品**：需要準備的物品或衣物\n6. **注意事項**：天氣、取消條件、其他重要提醒\n7. **聯絡資訊**：相關連結、參考資料（保持完整網址）\n\n👥 **參與者提取規則**：\n- **重要：attendees 欄位請保持空陣列 []，避免發送 Google Calendar 通知**\n- 所有參與者資訊（包含車手和乘客）都寫在 description 中\n- 這樣可以避免 Google Calendar 自動發送邀請通知\n\n💰 **費用資訊提取**：\n- 交通費、餐費、門票、其他雜費\n- 在 description 中詳細說明各項費用\n\n🔗 **連結處理**：\n- 保持網址完整，不要截斷\n- 如果連結太長，確保包含完整的可點擊網址\n\n🎯 **信心度評估**：\n- 0.9+：完整時間+地點+詳細行程+參與者資訊\n- 0.7-0.9：明確時間和地點，部分詳細資訊\n- 0.5-0.7：基本時間或地點，缺少詳細資訊\n- <0.5：缺乏關鍵信息\n\n請按照以下 JSON 格式回覆，不要添加任何其他文字：\n{\n  \"hasEvent\": true,\n  \"events\": [\n    {\n      \"title\": \"主要活動標題\",\n      \"description\": \"詳細的活動描述，包含完整行程安排、集合資訊、費用明細、參與者資訊、注意事項等\",\n      \"startDateTime\": \"2025-06-29\",\n      \"endDateTime\": \"2025-06-29\", \n      \"isAllDay\": true,\n      \"location\": \"主要集合地點或最重要的地點\",\n      \"attendees\": [],\n      \"confidence\": 0.95\n    }\n  ],\n  \"reasoning\": \"分析原因，說明如何整合多個活動為單一事件，以及信心度評估依據\"\n}\n\n**活動類型判斷範例**：\n- ✅ 全天活動：「三峽瀑布一日遊」→ isAllDay: true, startDateTime: \"2025-06-29\"\n- ✅ 全天活動：「工作坊」→ isAllDay: true, startDateTime: \"2025-06-15\"  \n- ✅ 定時活動：「下午2點開會」→ isAllDay: false, startDateTime: \"2025-06-01T14:00:00+08:00\"\n- ✅ 定時活動：「簡報1小時」→ isAllDay: false, startDateTime: \"2025-06-01T14:00:00+08:00\"\n\n**描述格式建議**：\n使用清晰的結構化格式，將所有參與者資訊寫在描述中：\n```\n集合時間：9:30 a.m.；集合地點：三峽區竹崙路238號（禾煦熊空茶園外碰面+停車）。\n\n行程安排：\n• 上午：參訪禾煦熊空茶園\n• 中午：三峽插角133現烤胡椒雞用餐  \n• 下午：雲森瀑布健行+玩水泡腳\n• 傍晚：三峽老街自由活動\n\n費用：車資200元；餐費200-400元；茶園門票280元（可抵餐點100元）。\n\n車手安排：\n• @小泉：Vivian, Conni, Lucia\n• @bryan：Ting, Vera, 哲瑋\n• @韋成：小張, 謝小玥, 王美惠\n• @Money Yu：其他參與者\n\n注意事項：遇雨取消/改期，請攜帶換洗衣物。\n```\n\n現在請分析以下 Slack 訊息：「={{$json.text}}」\n\n請將整個活動視為一個完整事件，把所有細節、行程安排、參與者資訊都整理在 description 中，直接回覆 JSON 格式，不要包含 ```json 標記。"
             }
           ]
         }
@@ -249,13 +258,34 @@
         },
         "start": "={{$json.startDateTime}}",
         "end": "={{$json.endDateTime}}",
+        "useDefaultReminders": false,
         "additionalFields": {
           "allday": "no",
           "description": "={{$json.description}}",
           "location": "={{$json.location}}",
           "maxAttendees": 50,
-          "sendUpdates": "all",
+          "sendUpdates": "none",
           "summary": "={{$json.title}}"
+        },
+        "remindersUi": {
+          "remindersValues": [
+            {
+              "method": "popup",
+              "minutes": 180
+            },
+            {
+              "method": "popup",
+              "minutes": 90
+            },
+            {
+              "method": "popup",
+              "minutes": 10
+            },
+            {
+              "method": "popup",
+              "minutes": 1
+            }
+          ]
         }
       },
       "id": "0f6d6c00-f47a-400f-b443-3b7c0ac88fc8",
@@ -425,7 +455,7 @@
       ]
     }
   },
-  "active": true,
+  "active": false,
   "settings": {
     "saveExecutionProgress": true,
     "saveManualExecutions": true,
@@ -434,7 +464,7 @@
     "executionTimeout": 3600,
     "timezone": "UTC"
   },
-  "versionId": "2d6292d7-f81a-4938-a85b-08a066504c11",
+  "versionId": "79cea021-4b56-49e4-a812-e92af9302a58",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"

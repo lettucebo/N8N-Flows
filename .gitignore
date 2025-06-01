@@ -1,0 +1,44 @@
+# Ignore Visual Studio files
+.vs/
+*.user
+*.suo
+*.cache
+*.log
+
+# Build directories
+bin/
+obj/
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Others
+dist/
+.idea/
+.DS_Store
+
+# Sensitive configuration files
+appsettings.Development.json
+appsettings.Production.json
+.env
+.env.local
+.env.development.local
+.env.production.local
+mcp.json
+
+# Exclude files that might contain connection strings
+**/config.local.js
+__azurite_db_blob__.json
+__azurite_db_blob_extent__.json
+__azurite_db_queue__.json
+__azurite_db_queue_extent__.json
+__azurite_db_table__.json
+__blobstorage__/*
+AzuriteConfig
