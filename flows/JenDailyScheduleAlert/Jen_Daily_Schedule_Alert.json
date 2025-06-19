@@ -1,0 +1,136 @@
+{
+  "name": "Jen Daily Schedule Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1B19nehOp-PMweCWRcsyEne5Ih1dztN6Zc4JEp2ZgxsY",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet1",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "cad75dff-5113-4b13-a352-83d579d3967a",
+      "name": "讀取排班表",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "uaKbWsktDQm9340w",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Jen 排班通知處理邏輯 - 修正時區判斷邏輯（含夏令時）\nconst items = $input.all();\n\nconsole.log('=== 資料結構分析 ===');\nconsole.log('items 長度:', items.length);\n\n// 🕐 動態時區偏移函數（處理夏令時）\nfunction getCalgaryOffset(date) {\n  const year = date.getFullYear();\n  \n  // 計算夏令時開始：3月第二個週日\n  const marchFirst = new Date(year, 2, 1); // 3月1日\n  const firstSunday = 7 - marchFirst.getDay();\n  const secondSunday = firstSunday + 7;\n  const dstStart = new Date(year, 2, secondSunday, 2, 0, 0); // 3月第二個週日 2:00 AM\n  \n  // 計算夏令時結束：11月第一個週日\n  const novemberFirst = new Date(year, 10, 1); // 11月1日\n  const novFirstSunday = 7 - novemberFirst.getDay();\n  const dstEnd = new Date(year, 10, novFirstSunday, 2, 0, 0); // 11月第一個週日 2:00 AM\n  \n  // 判斷是否在夏令時期間\n  if (date >= dstStart && date < dstEnd) {\n    console.log('🌞 卡加利夏令時期間 (MDT): UTC-6');\n    return -6 * 60; // UTC-6 (Mountain Daylight Time)\n  } else {\n    console.log('❄️ 卡加利標準時期間 (MST): UTC-7');\n    return -7 * 60; // UTC-7 (Mountain Standard Time)\n  }\n}\n\n// 時區設置\nconst taipeiOffset = 8 * 60; // UTC+8 (分鐘)\nconst now = new Date();\nconst calgaryOffset = getCalgaryOffset(now); // 動態計算卡加利時區\n\n// 取得當前時間\nconst taipeiNow = new Date(now.getTime() + (taipeiOffset * 60000));\nconst calgaryNow = new Date(now.getTime() + (calgaryOffset * 60000));\n\nconsole.log('🌍 時區資訊:');\nconsole.log('台北時區偏移:', taipeiOffset / 60, '小時');\nconsole.log('卡加利時區偏移:', calgaryOffset / 60, '小時');\n\n// 🎯 新的時間判斷邏輯\nconst taipeiHour = taipeiNow.getHours();\nlet targetDate;\nlet displayDay;\nlet isShowingTomorrow;\n\nif (taipeiHour >= 8 && taipeiHour <= 19) {\n  // 台北 08:00-19:59 → 顯示卡加利「明天」班表\n  const calgaryTomorrow = new Date(calgaryNow);\n  calgaryTomorrow.setDate(calgaryTomorrow.getDate() + 1);\n  targetDate = calgaryTomorrow.toISOString().split('T')[0];\n  displayDay = '明天';\n  isShowingTomorrow = true;\n  console.log('🌅 台北白天時段 (08:00-19:59) - 顯示卡加利明天班表');\n} else {\n  // 台北 20:00-07:59 → 顯示卡加利「今天」班表\n  targetDate = calgaryNow.toISOString().split('T')[0];\n  displayDay = '今天';\n  isShowingTomorrow = false;\n  console.log('🌙 台北夜間時段 (20:00-07:59) - 顯示卡加利今天班表');\n}\n\nconsole.log('台北當前時間:', taipeiNow.toISOString());\nconsole.log('卡加利當前時間:', calgaryNow.toISOString());\nconsole.log('目標日期:', targetDate);\nconsole.log('顯示天數:', displayDay);\nconsole.log('台北小時:', taipeiHour);\n\n// 收集所有資料\nconst scheduleData = [];\n\nconsole.log('開始處理所有 items...');\n\n// 直接處理每個 item（每個 item 代表一行資料）\nfor (let i = 0; i < items.length; i++) {\n  const item = items[i];\n  const row = item.json;\n  \n  console.log(`處理第 ${i+1} 個 item:`, JSON.stringify(row, null, 2));\n  \n  // 跳過無效資料\n  if (!row || !row.Employee || !row.Date) {\n    console.log(`跳過第 ${i+1} 個 item (無員工名稱或日期)`);\n    continue;\n  }\n  \n  const employee = row.Employee;\n  const dateStr = row.Date;\n  const day = row.Day;\n  const shiftTime = row.Shift_Time;\n  const status = row.Status;\n  const location = row.Manager_Location;\n  \n  console.log(`處理員工: ${employee}, 日期: ${dateStr}, 班次: ${shiftTime}, 狀態: ${status}, 位置: ${location}`);\n  \n  // 日期格式轉換\n  let formattedDate = '';\n  if (dateStr && dateStr.includes('/')) {\n    try {\n      const parts = dateStr.split('/');\n      if (parts.length === 3) {\n        const month = parts[0].padStart(2, '0');\n        const day = parts[1].padStart(2, '0');\n        const year = parts[2];\n        formattedDate = `${year}-${month}-${day}`;\n        console.log(`日期轉換: ${dateStr} → ${formattedDate}`);\n      }\n    } catch (e) {\n      console.log('日期解析錯誤:', dateStr);\n      continue;\n    }\n  }\n  \n  if (formattedDate && employee) {\n    const processedRow = {\n      employee: employee.trim(),\n      date: formattedDate,\n      day: day,\n      shiftTime: shiftTime || '',\n      status: status || '',\n      location: location || ''\n    };\n    \n    scheduleData.push(processedRow);\n    console.log(`✅ 成功處理:`, processedRow);\n  }\n}\n\nconsole.log('處理後的 scheduleData 長度:', scheduleData.length);\nconsole.log('前5筆處理後的資料:', scheduleData.slice(0, 5));\n\n// 找出目標日期的班表\nconst targetSchedules = scheduleData.filter(item => \n  item.date === targetDate\n);\n\nconsole.log(`${displayDay}的班表筆數:`, targetSchedules.length);\nconsole.log(`${displayDay}的所有班表:`, targetSchedules);\n\n// 找出 Jen 的班表\nconst jenTargetSchedule = targetSchedules.find(item => \n  item.employee && item.employee.toLowerCase().includes('jen')\n);\n\n// 找出其他同事的班表\nconst othersTargetSchedules = targetSchedules.filter(item => \n  item.employee && !item.employee.toLowerCase().includes('jen')\n);\n\nconsole.log(`Jen ${displayDay}班表:`, jenTargetSchedule);\nconsole.log(`其他同事${displayDay}班表數量:`, othersTargetSchedules.length);\n\n// 格式化通知訊息 - 修正作用域問題\nfunction formatScheduleMessage(taipeiNow, calgaryNow, jenSchedule, othersSchedules, displayDay, targetDate, isShowingTomorrow, calgaryOffset) {\n  const taipeiDateStr = taipeiNow.toLocaleDateString('zh-TW', {\n    year: 'numeric',\n    month: 'numeric', \n    day: 'numeric',\n    weekday: 'short'\n  });\n  \n  const taipeiTimeStr = taipeiNow.toLocaleTimeString('zh-TW', {\n    hour: '2-digit',\n    minute: '2-digit',\n    hour12: false\n  });\n  \n  const calgaryDateStr = calgaryNow.toLocaleDateString('en-CA', {\n    year: 'numeric',\n    month: 'numeric',\n    day: 'numeric', \n    weekday: 'short'\n  });\n  \n  const calgaryTimeStr = calgaryNow.toLocaleTimeString('en-CA', {\n    hour: '2-digit',\n    minute: '2-digit',\n    hour12: true\n  });\n  \n  // 計算目標日期的顯示格式\n  const targetDateObj = new Date(targetDate + 'T12:00:00');\n  const targetDateStr = targetDateObj.toLocaleDateString('zh-TW', {\n    month: 'numeric',\n    day: 'numeric', \n    weekday: 'short'\n  });\n  \n  // 顯示時區資訊\n  const timeZoneInfo = calgaryOffset === -6 * 60 ? 'MDT (UTC-6)' : 'MST (UTC-7)';\n  \n  let message = `🍁 Jen ${displayDay}班表提醒\\n\\n`;\n  message += `⚠️ 時區提醒：這是 Jen 在卡加利的「${displayDay}」班表！\\n`;\n  message += `📅 台北現在：${taipeiDateStr} ${taipeiTimeStr}\\n`;\n  message += `📅 卡加利現在：${calgaryDateStr} ${calgaryTimeStr} (${timeZoneInfo})\\n\\n`;\n  \n  // Jen 的班表\n  if (jenSchedule) {\n    message += `👤 Jen 的卡加利${displayDay}班次 (${targetDateStr})：\\n`;\n    \n    if (jenSchedule.status === 'OFF') {\n      message += `🏠 休假\\n`;\n    } else {\n      const timeInfo = jenSchedule.shiftTime;\n      if (timeInfo) {\n        message += `⏰ ${timeInfo} (卡加利時間)\\n`;\n      }\n      message += `📍 狀態: ${jenSchedule.status}\\n`;\n      if (jenSchedule.location) {\n        message += `📍 位置: ${jenSchedule.location}\\n`;\n      }\n    }\n  } else {\n    message += `👤 Jen 的卡加利${displayDay}班次 (${targetDateStr})：\\n`;\n    message += `❓ 查無資料\\n`;\n  }\n  \n  message += `\\n👥 同日其他同事：\\n`;\n  \n  if (othersSchedules.length > 0) {\n    othersSchedules.forEach(schedule => {\n      const employeeName = schedule.employee;\n      \n      // Karen 的邏輯：根據 Manager_Location 顯示位置\n      if (employeeName.toLowerCase().includes('karen')) {\n        if (schedule.location) {\n          message += `• ${employeeName}: Manager (${schedule.location})\\n`;\n        } else {\n          message += `• ${employeeName}: Manager\\n`;\n        }\n      } else {\n        // 其他員工的邏輯\n        if (schedule.status === 'OFF') {\n          message += `• ${employeeName}: 休假\\n`;\n        } else {\n          const timeInfo = schedule.shiftTime || schedule.status;\n          const locationInfo = schedule.location ? ` (${schedule.location})` : '';\n          message += `• ${employeeName}: ${timeInfo}${locationInfo}\\n`;\n        }\n      }\n    });\n  } else {\n    message += `• 查無其他同事資料\\n`;\n  }\n  \n  return message;\n}\n\n// 呼叫格式化函式，傳入所需的參數\nconst notificationMessage = formatScheduleMessage(\n  taipeiNow, \n  calgaryNow, \n  jenTargetSchedule, \n  othersTargetSchedules,\n  displayDay,\n  targetDate,\n  isShowingTomorrow,\n  calgaryOffset\n);\n\nconsole.log('最終通知訊息:', notificationMessage);\n\n// 回傳處理結果\nreturn {\n  json: {\n    message: notificationMessage,\n    jenSchedule: jenTargetSchedule,\n    othersSchedules: othersTargetSchedules,\n    targetDate: targetDate,\n    displayDay: displayDay,\n    isShowingTomorrow: isShowingTomorrow,\n    taipeiTime: taipeiNow.toISOString(),\n    calgaryTime: calgaryNow.toISOString(),\n    timeZoneInfo: {\n      taipeiOffset: taipeiOffset / 60,\n      calgaryOffset: calgaryOffset / 60,\n      isDST: calgaryOffset === -6 * 60,\n      timeZoneDisplay: calgaryOffset === -6 * 60 ? 'MDT (UTC-6)' : 'MST (UTC-7)'\n    },\n    debugInfo: {\n      totalItems: items.length,\n      processedDataLength: scheduleData.length,\n      targetSchedulesLength: targetSchedules.length,\n      jenFound: !!jenTargetSchedule,\n      taipeiHour: taipeiHour\n    }\n  }\n};"
+      },
+      "id": "f5dc57ad-22cd-48fc-abea-5ea9c5cbd196",
+      "name": "處理排班資料",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "#n8n-work-schedule",
+        "text": "={{$json.message}}",
+        "otherOptions": {},
+        "attachments": []
+      },
+      "id": "bd7cea7e-3893-4e1d-8142-1ee6051f83fc",
+      "name": "發送 Slack 通知",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [
+        660,
+        0
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8,20 * * *"
+            }
+          ]
+        }
+      },
+      "id": "9ad9e047-9354-4488-b891-0fd997553866",
+      "name": "每日早晚 8:00 觸發",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "讀取排班表": {
+      "main": [
+        [
+          {
+            "node": "處理排班資料",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "處理排班資料": {
+      "main": [
+        [
+          {
+            "node": "發送 Slack 通知",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "每日早晚 8:00 觸發": {
+      "main": [
+        [
+          {
+            "node": "讀取排班表",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "d6d750dc-23d3-4723-9a5e-9773b89132d5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"
+  },
+  "id": "IpjZzAXLRwSjcLza",
+  "tags": []
+}
