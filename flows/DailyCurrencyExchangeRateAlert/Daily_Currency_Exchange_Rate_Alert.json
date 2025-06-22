@@ -1,0 +1,140 @@
+{
+  "name": "Daily Currency Exchange Rate Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 1,10 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "6917af19-058b-4fc0-a0df-9e47ddc08bc0",
+      "name": "定時觸發器",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        400,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://v6.exchangerate-api.com/v6/{{$env.EXCHANGE_API_KEY}}/latest/TWD",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "8e1c3e0e-8ac2-4ff2-a3e9-3fb7c354e636",
+      "name": "取得即時匯率",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        620,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 生成簡化版匯率報告\nconst data = $input.first().json;\nconst now = new Date();\n\n// 判斷是早盤還是晚盤 (基於 UTC 時間)\nconst utcHour = now.getUTCHours();\nconst isEveningReport = utcHour >= 10; // UTC 10點 = 台北18點\nconst timeLabel = isEveningReport ? '晚盤 18:00' : '早盤 9:00';\n\nconsole.log(`生成${timeLabel}報告`);\nconsole.log('當前 UTC 時間:', utcHour + ':' + now.getUTCMinutes());\n\nconst rates = data.conversion_rates;\nif (!rates) {\n  throw new Error('找不到匯率資料');\n}\n\n// 目標貨幣匯率計算（日圓改為1日圓單位）\nconst currencies = {\n  'USD': { name: '美元', flag: '🇺🇸', rate: (1/rates.USD).toFixed(2), unit: '1 美元' },\n  'JPY': { name: '日圓', flag: '🇯🇵', rate: (1/rates.JPY).toFixed(4), unit: '1 日圓' },\n  'AUD': { name: '澳幣', flag: '🇦🇺', rate: (1/rates.AUD).toFixed(2), unit: '1 澳幣' },\n  'CAD': { name: '加幣', flag: '🇨🇦', rate: (1/rates.CAD).toFixed(2), unit: '1 加幣' }\n};\n\n// 生成訊息（數字更大更醒目）\nconst message = `💱 台幣匯率報告 │ ${timeLabel}\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n📊 *即時匯率 (TWD 基準)*\n\n${Object.entries(currencies).map(([code, info]) => {\n  return `${info.flag} *${code}*\\t\\t*\\`${info.rate}\\`* 元`;\n}).join('\\n')}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n\n💡 *匯率說明：*\n- ${currencies.USD.unit} = *\\`${currencies.USD.rate}\\`* 台幣\n- ${currencies.JPY.unit} = *\\`${currencies.JPY.rate}\\`* 台幣  \n- ${currencies.AUD.unit} = *\\`${currencies.AUD.rate}\\`* 台幣\n- ${currencies.CAD.unit} = *\\`${currencies.CAD.rate}\\`* 台幣\n\n🕘 *下次更新：* ${isEveningReport ? '明日早盤 9:00' : '晚盤 18:00'}\n\n📝 資料來源：ExchangeRate-API\n🤖 由系統自動更新`;\n\nconst taiwanTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);\nconsole.log('台北時間:', taiwanTime.toLocaleString('zh-TW'));\nconsole.log('訊息長度:', message.length);\n\nreturn {\n  json: {\n    message: message,\n    timeLabel: timeLabel,\n    updateTime: taiwanTime.toISOString(),\n    currencies: currencies\n  }\n};"
+      },
+      "id": "ec99d152-d3e7-4840-9b14-ec0cbeaddb92",
+      "name": "生成簡化報告",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "#n8n-currency",
+        "text": "={{$json.message}}",
+        "otherOptions": {},
+        "attachments": []
+      },
+      "id": "fc101e68-a029-4421-835a-f760087e5f6a",
+      "name": "發送到 Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        -160
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "定時觸發器": {
+      "main": [
+        [
+          {
+            "node": "取得即時匯率",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "取得即時匯率": {
+      "main": [
+        [
+          {
+            "node": "生成簡化報告",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "生成簡化報告": {
+      "main": [
+        [
+          {
+            "node": "發送到 Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "75bbb8b7-18ce-4cf5-9847-b3b2d77e8525",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"
+  },
+  "id": "6dxyoDlrqpZYcYnY",
+  "tags": [
+    {
+      "createdAt": "2025-06-22T02:38:50.887Z",
+      "updatedAt": "2025-06-22T02:38:50.887Z",
+      "id": "zqsdwQAC8uguoId9",
+      "name": "匯率"
+    },
+    {
+      "createdAt": "2025-06-22T02:38:50.890Z",
+      "updatedAt": "2025-06-22T02:38:50.890Z",
+      "id": "d6lkB0bGQ583pWQt",
+      "name": "台幣"
+    }
+  ]
+}
