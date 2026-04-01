@@ -2,460 +2,372 @@
   "name": "Slack to Google Calendar AI Assistant",
   "nodes": [
     {
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      },
+      "id": "8c0ad7b0-a88c-4be8-9010-d45e3203e9c0",
+      "name": "Slack Message Trigger",
       "parameters": {
-        "trigger": [
-          "message"
-        ],
         "channelId": {
           "__rl": true,
           "mode": "id",
           "value": "C08NVUQUK8F"
         },
-        "options": {}
+        "options": {},
+        "trigger": [
+          "message"
+        ]
       },
-      "id": "8c0ad7b0-a88c-4be8-9010-d45e3203e9c0",
-      "name": "Slack Message Trigger",
-      "type": "n8n-nodes-base.slackTrigger",
-      "typeVersion": 1,
       "position": [
         240,
         464
       ],
-      "webhookId": "d8c9a4e7-f3d5-4c2a-9b8e-1234567890ab",
-      "credentials": {
-        "slackApi": {
-          "id": "H8RWtu7aOphSXGk5",
-          "name": "Slack account"
-        }
-      }
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "webhookId": "d8c9a4e7-f3d5-4c2a-9b8e-1234567890ab"
     },
     {
+      "id": "filter-slack-messages",
+      "name": "Filter Valid Messages",
       "parameters": {
         "conditions": {
-          "options": {
-            "version": 2,
-            "leftValue": "",
-            "caseSensitive": true,
-            "typeValidation": "loose"
-          },
+          "combinator": "and",
           "conditions": [
             {
               "id": "cond-channel",
               "leftValue": "={{ $json.channel }}",
-              "rightValue": "C08NVUQUK8F",
               "operator": {
-                "type": "string",
-                "operation": "contains"
-              }
+                "operation": "contains",
+                "type": "string"
+              },
+              "rightValue": "C08NVUQUK8F"
             },
             {
               "id": "cond-type",
               "leftValue": "={{ $json.type }}",
-              "rightValue": "message",
               "operator": {
-                "type": "string",
-                "operation": "equals"
-              }
+                "operation": "equals",
+                "type": "string"
+              },
+              "rightValue": "message"
             },
             {
               "id": "cond-bot",
               "leftValue": "={{ $json.bot_id }}",
-              "rightValue": "",
               "operator": {
-                "type": "string",
                 "operation": "empty",
-                "singleValue": true
-              }
+                "singleValue": true,
+                "type": "string"
+              },
+              "rightValue": ""
             },
             {
               "id": "cond-subtype",
               "leftValue": "={{ $json.subtype }}",
-              "rightValue": "",
               "operator": {
-                "type": "string",
                 "operation": "empty",
-                "singleValue": true
-              }
+                "singleValue": true,
+                "type": "string"
+              },
+              "rightValue": ""
             },
             {
               "id": "cond-thread",
               "leftValue": "={{ $json.thread_ts }}",
-              "rightValue": "",
               "operator": {
-                "type": "string",
                 "operation": "empty",
-                "singleValue": true
-              }
+                "singleValue": true,
+                "type": "string"
+              },
+              "rightValue": ""
             }
           ],
-          "combinator": "and"
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
         },
         "options": {}
       },
-      "id": "filter-slack-messages",
-      "name": "Filter Valid Messages",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
       "position": [
         464,
         464
-      ]
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3
     },
     {
-      "parameters": {
-        "functionCode": "// ===============================================\n// Parse AI Response\n// ===============================================\n\nconsole.log('🚀 開始處理 AI 回應...');\n\n// 1. 檢查基本輸入\nconst inputData = $input.first();\nif (!inputData || !inputData.json) {\n  console.log('❌ 沒有輸入數據，停止執行');\n  return [];\n}\n\nconsole.log('📥 輸入數據:', JSON.stringify(inputData.json, null, 2));\n\n// 2. 取得 AI 輸出（從 text 欄位）\nconst aiResponseText = inputData.json.text || inputData.json.output;\nif (!aiResponseText) {\n  console.log('❌ AI 沒有輸出文字，停止執行');\n  return [];\n}\n\nconsole.log('🤖 AI 原始回應:', aiResponseText);\n\n// 3. 解析 JSON 字串\nlet aiOutput;\ntry {\n  // 清理可能的 markdown 格式\n  const cleanResponse = aiResponseText.replace(/```json\\n?|```\\n?/g, '').trim();\n  aiOutput = JSON.parse(cleanResponse);\n  console.log('✅ 解析後的 AI 輸出:', JSON.stringify(aiOutput, null, 2));\n} catch (error) {\n  console.log('❌ JSON 解析失敗:', error.message);\n  return [{\n    json: {\n      status: 'error',\n      error: `AI 回應解析失敗: ${error.message}`,\n      rawResponse: aiResponseText,\n      slackUser: 'unknown',\n      slackChannel: 'unknown',\n      slackTimestamp: Date.now().toString()\n    }\n  }];\n}\n\n// 4. 檢查 Slack 原始數據\nlet slackData = {};\ntry {\n  // 從 Slack Message Trigger 取得原始數據\n  if ($('Slack Message Trigger') && $('Slack Message Trigger').first()) {\n    slackData = $('Slack Message Trigger').first().json;\n  } else {\n    // 如果無法取得原始數據，使用預設值\n    slackData = {\n      text: '無法取得原始訊息',\n      user: 'unknown',\n      channel: 'unknown',\n      ts: Date.now().toString()\n    };\n  }\n  console.log('📱 Slack 數據:', JSON.stringify(slackData, null, 2));\n} catch (error) {\n  console.log('⚠️ 取得 Slack 數據時發生錯誤:', error.message);\n  slackData = {\n    text: '無法取得原始訊息',\n    user: 'unknown', \n    channel: 'unknown',\n    ts: Date.now().toString()\n  };\n}\n\n// 5. 檢查 AI 是否找到事件\nif (!aiOutput.hasEvent || !aiOutput.events || aiOutput.events.length === 0) {\n  console.log('ℹ️ AI 沒有找到事件');\n  return [{\n    json: {\n      status: 'no_event',\n      message: '未找到有效的日程信息',\n      originalMessage: slackData.text,\n      slackUser: slackData.user,\n      slackChannel: slackData.channel,\n      slackTimestamp: slackData.ts,\n      reasoning: aiOutput.reasoning || '無法識別日程相關內容'\n    }\n  }];\n}\n\n// 6. 處理找到的事件（支援全天活動）\nconsole.log(`📅 找到 ${aiOutput.events.length} 個事件，開始處理`);\n\ntry {\n  const processedEvents = aiOutput.events.map((event, index) => {\n    console.log(`🔄 處理事件 ${index}:`, JSON.stringify(event, null, 2));\n    \n    // 驗證事件是否有必要欄位\n    if (!event.title && !event.startDateTime) {\n      console.log(`⚠️ 事件 ${index} 缺少必要欄位，跳過`);\n      return null;\n    }\n\n    // 🎯 處理全天活動與部分時間活動\n    let startDateTime, endDateTime, isAllDay = false;\n    let calendarStartDateTime, calendarEndDateTime;\n    \n    try {\n      // 檢查是否為全天活動\n      const isAllDayEvent = event.isAllDay === true || \n                           (!event.startDateTime.includes('T') && !event.endDateTime.includes('T'));\n      \n      if (isAllDayEvent) {\n        // 📅 全天活動處理\n        console.log(`📅 事件 ${index} 是全天活動`);\n        isAllDay = true;\n        \n        // 確保日期格式正確 (YYYY-MM-DD)\n        startDateTime = event.startDateTime.includes('T') \n          ? event.startDateTime.split('T')[0] \n          : event.startDateTime;\n        endDateTime = event.endDateTime.includes('T') \n          ? event.endDateTime.split('T')[0] \n          : event.endDateTime;\n          \n        // Google Calendar 全天活動格式：純日期字串\n        calendarStartDateTime = startDateTime;\n        calendarEndDateTime = endDateTime;\n        \n        // 驗證日期格式\n        if (!startDateTime.match(/^\\d{4}-\\d{2}-\\d{2}$/)) {\n          throw new Error('全天活動日期格式錯誤');\n        }\n        \n        console.log(`✅ 全天活動時間: ${startDateTime} 到 ${endDateTime}`);\n        \n      } else {\n        // ⏰ 部分時間活動處理\n        console.log(`⏰ 事件 ${index} 是部分時間活動`);\n        isAllDay = false;\n        \n        const startDate = new Date(event.startDateTime);\n        const endDate = new Date(event.endDateTime);\n        \n        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {\n          throw new Error('無效的日期時間格式');\n        }\n        \n        // 確保結束時間在開始時間之後\n        if (endDate <= startDate) {\n          endDate.setTime(startDate.getTime() + 60 * 60 * 1000);\n        }\n        \n        startDateTime = startDate.toISOString();\n        endDateTime = endDate.toISOString();\n        \n        // Google Calendar 部分時間活動格式：完整 ISO 字串\n        calendarStartDateTime = startDateTime;\n        calendarEndDateTime = endDateTime;\n        \n        console.log(`✅ 部分時間活動: ${startDateTime} 到 ${endDateTime}`);\n      }\n      \n    } catch (dateError) {\n      console.log(`⚠️ 事件 ${index} 時間處理失敗，使用預設:`, dateError.message);\n      \n      // 預設為明天的全天活動\n      const tomorrow = new Date();\n      tomorrow.setDate(tomorrow.getDate() + 1);\n      const dateStr = tomorrow.toISOString().split('T')[0];\n      \n      startDateTime = dateStr;\n      endDateTime = dateStr;\n      calendarStartDateTime = dateStr;\n      calendarEndDateTime = dateStr;\n      isAllDay = true;\n    }\n    \n    // 處理參與者列表\n    const attendees = (event.attendees || []).filter(email => \n      email && email.includes('@') && email.includes('.')\n    );\n    \n    // 確保 confidence 是浮點數\n    const confidence = parseFloat(event.confidence) || 0.5;\n    console.log(`📊 事件 ${index} 信心度: ${confidence} (${Math.round(confidence * 100)}%)`);\n    \n    // 構建詳細描述\n    const description = [\n      event.description || '',\n      '',\n      '📋 來源信息：',\n      `• Slack 訊息: ${slackData.text}`,\n      `• 發送者: <@${slackData.user}>`,\n      `• 頻道: <#${slackData.channel}>`,\n      `• 活動類型: ${isAllDay ? '📅 全天活動' : '⏰ 部分時間活動'}`,\n      `• AI 分析信心度: ${Math.round(confidence * 100)}%`,\n      aiOutput.reasoning ? `• 分析說明: ${aiOutput.reasoning}` : ''\n    ].filter(line => line !== '').join('\\n');\n    \n    // 🎯 根據信心度決定處理策略\n    let eventStatus;\n    if (confidence >= 0.7) {\n      eventStatus = 'high_confidence';\n      console.log(`✅ 事件 ${index} 高信心度，自動處理`);\n    } else {\n      eventStatus = 'low_confidence';\n      console.log(`⚠️ 事件 ${index} 低信心度，需要確認`);\n    }\n    \n    const processedEvent = {\n      json: {\n        eventIndex: index,\n        title: event.title || '未命名事件',\n        description: description,\n        \n        // 📅 時間信息\n        startDateTime: calendarStartDateTime,\n        endDateTime: calendarEndDateTime,\n        isAllDay: isAllDay,\n        \n        // 📍 地點和參與者\n        location: event.location || '',\n        attendees: attendees,\n        \n        // 📊 分析信息\n        confidence: confidence,\n        confidenceDisplay: `${Math.round(confidence * 100)}%`,\n        reasoning: aiOutput.reasoning || '',\n        \n        // 📱 原始信息\n        originalMessage: slackData.text,\n        slackUser: slackData.user,\n        slackChannel: slackData.channel,\n        slackTimestamp: slackData.ts,\n        \n        // 🔄 處理狀態\n        status: eventStatus\n      }\n    };\n    \n    console.log(`✅ 事件 ${index} 處理完成:`, JSON.stringify(processedEvent.json, null, 2));\n    return processedEvent;\n  }).filter(event => event !== null);\n\n  // 7. 檢查是否有有效的處理結果\n  if (processedEvents.length === 0) {\n    console.log('❌ 沒有有效的事件可處理');\n    return [{\n      json: {\n        status: 'error',\n        error: '所有事件都處理失敗',\n        originalMessage: slackData.text,\n        slackUser: slackData.user,\n        slackChannel: slackData.channel,\n        slackTimestamp: slackData.ts\n      }\n    }];\n  }\n\n  console.log(`🎉 成功處理 ${processedEvents.length} 個事件`);\n  console.log('📤 最終輸出:', JSON.stringify(processedEvents, null, 2));\n  \n  return processedEvents;\n  \n} catch (error) {\n  console.log('❌ 處理事件時發生錯誤:', error.message);\n  console.log('🔍 錯誤堆疊:', error.stack);\n  \n  return [{\n    json: {\n      status: 'error',\n      error: `處理失敗: ${error.message}`,\n      originalMessage: slackData.text,\n      slackUser: slackData.user,\n      slackChannel: slackData.channel,\n      slackTimestamp: slackData.ts,\n      debugInfo: {\n        errorStack: error.stack,\n        inputData: inputData.json,\n        aiOutput: aiOutput\n      }\n    }\n  }];\n}"
-      },
       "id": "3cc251c9-728f-417b-a80a-207290d6290e",
       "name": "Parse AI Response",
-      "type": "n8n-nodes-base.function",
-      "typeVersion": 1,
+      "parameters": {
+        "jsCode": "// Parse AI Response\nconst inputData = $input.first();\nif (!inputData?.json) {\n  console.log('❌ 沒有輸入數據，停止執行');\n  return [{ json: { status: 'error', error: '沒有輸入數據' } }];\n}\n\nconst aiResponseText = inputData.json.text || inputData.json.output;\nif (!aiResponseText) {\n  console.log('❌ AI 沒有輸出文字，停止執行');\n  return [{ json: { status: 'error', error: 'AI 沒有輸出文字' } }];\n}\n\nlet aiOutput;\ntry {\n  const cleanResponse = aiResponseText.replace(/```json\\n?|```\\n?/g, '').trim();\n  aiOutput = JSON.parse(cleanResponse);\n} catch (error) {\n  console.log('❌ JSON 解析失敗:', error.message);\n  return [{ json: { status: 'error', error: `AI 回應解析失敗: ${error.message}`, rawResponse: aiResponseText, slackUser: 'unknown', slackChannel: 'unknown', slackTimestamp: Date.now().toString() } }];\n}\n\nlet slackData;\ntry {\n  slackData = $('Slack Message Trigger').first().json;\n} catch (error) {\n  console.log('⚠️ 取得 Slack 數據失敗:', error.message);\n  slackData = { text: '無法取得原始訊息', user: 'unknown', channel: 'unknown', ts: Date.now().toString() };\n}\n\nif (!aiOutput.hasEvent || !aiOutput.events || aiOutput.events.length === 0) {\n  console.log('ℹ️ AI 沒有找到事件');\n  return [{ json: { status: 'no_event', message: '未找到有效的日程信息', originalMessage: slackData.text, slackUser: slackData.user, slackChannel: slackData.channel, slackTimestamp: slackData.ts, reasoning: aiOutput.reasoning || '無法識別日程相關內容' } }];\n}\n\nconsole.log(`📅 找到 ${aiOutput.events.length} 個事件，開始處理`);\n\ntry {\n  const processedEvents = aiOutput.events.map((event, index) => {\n    if (!event.title || !event.startDateTime) {\n      console.log(`⚠️ 事件 ${index} 缺少必要欄位 (title=${event.title}, startDateTime=${event.startDateTime})，跳過`);\n      return null;\n    }\n    let startDateTime, endDateTime, isAllDay = false;\n    try {\n      const isAllDayEvent = event.isAllDay === true || (!event.startDateTime.includes('T') && !event.endDateTime.includes('T'));\n      if (isAllDayEvent) {\n        isAllDay = true;\n        startDateTime = event.startDateTime.includes('T') ? event.startDateTime.split('T')[0] : event.startDateTime;\n        endDateTime = event.endDateTime.includes('T') ? event.endDateTime.split('T')[0] : event.endDateTime;\n        if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDateTime)) throw new Error(`全天活動日期格式錯誤: ${startDateTime}`);\n        console.log(`✅ 事件 ${index} 全天活動: ${startDateTime}`);\n      } else {\n        const startDate = new Date(event.startDateTime);\n        const endDate = new Date(event.endDateTime);\n        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) throw new Error(`無效的日期時間格式: start=${event.startDateTime}, end=${event.endDateTime}`);\n        if (endDate <= startDate) endDate.setTime(startDate.getTime() + 3600000);\n        startDateTime = startDate.toISOString();\n        endDateTime = endDate.toISOString();\n        console.log(`✅ 事件 ${index} 定時活動: ${startDateTime} ~ ${endDateTime}`);\n      }\n    } catch (dateError) {\n      console.log(`⚠️ 事件 ${index} 時間處理失敗: ${dateError.message}，使用明天作為預設`);\n      const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);\n      const dateStr = tomorrow.toISOString().split('T')[0];\n      startDateTime = dateStr; endDateTime = dateStr; isAllDay = true;\n    }\n    const attendees = (event.attendees || []).filter(e => e?.includes('@') && e.includes('.'));\n    const confidence = parseFloat(event.confidence) || 0.5;\n    const description = [event.description || '', '', '📋 來源信息：', `• Slack 訊息: ${slackData.text}`, `• 發送者: <@${slackData.user}>`, `• 頻道: <#${slackData.channel}>`, `• 活動類型: ${isAllDay ? '📅 全天活動' : '⏰ 部分時間活動'}`, `• AI 分析信心度: ${Math.round(confidence * 100)}%`, aiOutput.reasoning ? `• 分析說明: ${aiOutput.reasoning}` : ''].filter(line => line !== '').join('\\n');\n    return { json: { eventIndex: index, title: event.title, description, startDateTime, endDateTime, isAllDay, location: event.location || '', attendees, confidence, confidenceDisplay: `${Math.round(confidence * 100)}%`, reasoning: aiOutput.reasoning || '', originalMessage: slackData.text, slackUser: slackData.user, slackChannel: slackData.channel, slackTimestamp: slackData.ts, status: confidence >= 0.7 ? 'high_confidence' : 'low_confidence' } };\n  }).filter(event => event !== null);\n  if (processedEvents.length === 0) {\n    console.log('⚠️ 所有事件都無效，回傳 no_event');\n    return [{ json: { status: 'no_event', message: '所有事件都無效', originalMessage: slackData.text, slackUser: slackData.user, slackChannel: slackData.channel, slackTimestamp: slackData.ts, reasoning: aiOutput.reasoning || '' } }];\n  }\n  console.log(`🎉 成功處理 ${processedEvents.length} 個事件`);\n  return processedEvents;\n} catch (error) {\n  console.log('❌ 處理事件時發生未預期錯誤:', error.message, error.stack);\n  return [{ json: { status: 'error', error: `處理失敗: ${error.message}`, originalMessage: slackData?.text || 'unknown', slackUser: slackData?.user || 'unknown', slackChannel: slackData?.channel || 'unknown', slackTimestamp: slackData?.ts || Date.now().toString() } }];\n}",
+        "mode": "runOnceForAllItems"
+      },
       "position": [
         1056,
         464
-      ]
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
+      "id": "has-valid-event",
+      "name": "Has Valid Event",
       "parameters": {
         "conditions": {
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-has-event",
+              "leftValue": "={{ $json.status }}",
+              "operator": {
+                "operation": "notEquals",
+                "type": "string"
+              },
+              "rightValue": "no_event"
+            },
+            {
+              "id": "cond-not-error",
+              "leftValue": "={{ $json.status }}",
+              "operator": {
+                "operation": "notEquals",
+                "type": "string"
+              },
+              "rightValue": "error"
+            }
+          ],
           "options": {
-            "version": 2,
-            "leftValue": "",
             "caseSensitive": true,
-            "typeValidation": "loose"
-          },
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
+        },
+        "options": {}
+      },
+      "position": [
+        1168,
+        464
+      ],
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3
+    },
+    {
+      "alwaysOutputData": false,
+      "id": "46555180-f9e7-44c4-b114-f941adc13adc",
+      "name": "Check Confidence Score",
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
           "conditions": [
             {
               "id": "cond-conf",
               "leftValue": "={{ $json.confidence }}",
-              "rightValue": 0.7,
               "operator": {
-                "type": "number",
-                "operation": "gte"
-              }
+                "operation": "gte",
+                "type": "number"
+              },
+              "rightValue": 0.7
             }
           ],
-          "combinator": "and"
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          }
         },
         "options": {}
       },
-      "id": "46555180-f9e7-44c4-b114-f941adc13adc",
-      "name": "Check Confidence Score",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
       "position": [
-        1280,
+        1392,
         464
       ],
-      "alwaysOutputData": false
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3
     },
     {
-      "parameters": {
-        "operation": "create",
-        "calendar": {
-          "__rl": true,
-          "value": "abc12207@gmail.com",
-          "mode": "list",
-          "cachedResultName": "abc12207@gmail.com"
-        },
-        "start": "={{$json.startDateTime}}",
-        "end": "={{$json.endDateTime}}",
-        "additionalFields": {
-          "allday": "yes",
-          "description": "={{$json.description}}",
-          "location": "={{$json.location}}",
-          "maxAttendees": 50,
-          "sendUpdates": "all",
-          "summary": "={{$json.title}}"
-        }
-      },
-      "id": "9b1a9087-efb1-4346-9680-09673497b489",
-      "name": "Create All Day Calendar Event",
-      "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1.3,
-      "position": [
-        1728,
-        272
-      ],
       "credentials": {
         "googleCalendarOAuth2Api": {
           "id": "ERUGcDCTMJESC4hA",
           "name": "Google Calendar account"
         }
-      }
+      },
+      "id": "9b1a9087-efb1-4346-9680-09673497b489",
+      "name": "Create Calendar Event",
+      "parameters": {
+        "additionalFields": {
+          "allday": "={{ $json.isAllDay ? 'yes' : 'no' }}",
+          "description": "={{$json.description}}",
+          "location": "={{$json.location}}",
+          "maxAttendees": 50,
+          "sendUpdates": "all",
+          "summary": "={{$json.title}}"
+        },
+        "calendar": {
+          "__rl": true,
+          "cachedResultName": "abc12207@gmail.com",
+          "mode": "list",
+          "value": "abc12207@gmail.com"
+        },
+        "end": "={{$json.endDateTime}}",
+        "operation": "create",
+        "start": "={{$json.startDateTime}}"
+      },
+      "position": [
+        1616,
+        368
+      ],
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3
     },
     {
-      "parameters": {
-        "resource": "message",
-        "operation": "post",
-        "select": "channel",
-        "channelId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "C08NVUQUK8F"
-        },
-        "messageType": "text",
-        "text": "=✅ **日曆事件已成功創建！**  📅 **{{$json.summary}}** {{$json.start.date ?    '🗓️ 日期: ' + DateTime.fromFormat($json.start.date, 'yyyy-MM-dd').toFormat('MM月dd日 (cccc)', {locale: 'zh-TW'}) :    '🕐 時間: ' + DateTime.fromISO($json.start.dateTime).toFormat('MM月dd日 (cccc) HH:mm', {locale: 'zh-TW'}) + ' - ' + DateTime.fromISO($json.end.dateTime).toFormat('HH:mm', {locale: 'zh-TW'}) }} 📍 地點: {{$json.location || '未指定'}} {{$json.description ? '📝 備註: ' + $json.description.split('📋 來源信息：')[0].trim() : ''}}  🔗 [查看事件]({{$json.htmlLink}})  _🤖 由 AI 助手自動創建 • 事件ID: {{$json.id}}_",
-        "otherOptions": {}
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
       },
       "id": "d8a44d97-e601-40ea-a28b-cb847da06bcf",
       "name": "Send Success Notification",
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.4,
-      "position": [
-        1936,
-        368
-      ],
-      "credentials": {
-        "slackApi": {
-          "id": "H8RWtu7aOphSXGk5",
-          "name": "Slack account"
-        }
-      },
-      "webhookId": "1b4b73df-9575-454e-8d3b-ae67fe5f6d5d"
-    },
-    {
       "parameters": {
-        "resource": "message",
-        "operation": "post",
-        "select": "channel",
         "channelId": {
           "__rl": true,
           "mode": "id",
           "value": "C08NVUQUK8F"
         },
         "messageType": "text",
-        "text": "=⚠️ *發現可能的日程，但信心度較低*\n\n📝 *{{$json.title}}*\n🕐 時間: {{$json.startDateTime}}\n📍 地點: {{$json.location || '未指定'}}\n📊 AI 信心度: {{$json.confidenceDisplay}} ({{$json.confidence >= 0.7 ? '高' : '低'}}信心度)\n\n💭 *AI 分析*: _{{$json.reasoning}}_\n\n💡 *建議*: 如需創建日曆事件，請發送更詳細的訊息（包含確切時間、地點等資訊）\n\n_🤖 此為 AI 助手低信心度提醒，不會自動創建事件_",
-        "otherOptions": {}
+        "operation": "post",
+        "otherOptions": {},
+        "resource": "message",
+        "select": "channel",
+        "text": "=✅ *日曆事件已成功創建！*\n\n📅 *{{$json.summary}}*\n{{$json.start.date ? '🗓️ 日期: ' + DateTime.fromFormat($json.start.date, 'yyyy-MM-dd').toFormat('MM月dd日 (cccc)', {locale: 'zh-TW'}) : '🕐 時間: ' + DateTime.fromISO($json.start.dateTime).setZone('Asia/Taipei').toFormat('MM月dd日 (cccc) HH:mm', {locale: 'zh-TW'}) + ' - ' + DateTime.fromISO($json.end.dateTime).setZone('Asia/Taipei').toFormat('HH:mm', {locale: 'zh-TW'})}}\n📍 地點: {{$json.location || '未指定'}}\n{{$json.description ? '📝 備註: ' + $json.description.split('📋 來源信息：')[0].trim() : ''}}\n\n🔗 <{{$json.htmlLink}}|查看事件>\n\n_🤖 由 AI 助手自動創建 • 事件ID: {{$json.id}}_"
       },
-      "id": "a19c1160-28c0-4c90-acb2-c0cfff0e2fa9",
-      "name": "Send Low Confidence Alert",
+      "position": [
+        1840,
+        368
+      ],
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
-      "position": [
-        1504,
-        560
-      ],
+      "webhookId": "f4ac4491-ad91-4786-aa05-2d311db6da10"
+    },
+    {
       "credentials": {
         "slackApi": {
           "id": "H8RWtu7aOphSXGk5",
           "name": "Slack account"
         }
       },
-      "webhookId": "6b17aa82-0b9b-46d5-8118-b68ba00cad46"
+      "id": "a19c1160-28c0-4c90-acb2-c0cfff0e2fa9",
+      "name": "Send Low Confidence Alert",
+      "parameters": {
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C08NVUQUK8F"
+        },
+        "messageType": "text",
+        "operation": "post",
+        "otherOptions": {},
+        "resource": "message",
+        "select": "channel",
+        "text": "=⚠️ *發現可能的日程，但信心度較低*\n\n📝 *{{$json.title}}*\n🕐 時間: {{$json.startDateTime}}\n📍 地點: {{$json.location || '未指定'}}\n📊 AI 信心度: {{$json.confidenceDisplay}} ({{$json.confidence >= 0.7 ? '高' : '低'}}信心度)\n\n💭 *AI 分析*: _{{$json.reasoning}}_\n\n💡 *建議*: 如需創建日曆事件，請發送更詳細的訊息（包含確切時間、地點等資訊）\n\n_🤖 此為 AI 助手低信心度提醒，不會自動創建事件_"
+      },
+      "position": [
+        1616,
+        560
+      ],
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "webhookId": "0cac5954-d0f4-48ee-aa52-be13e576a85c"
     },
     {
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      },
+      "id": "send-no-event-reply",
+      "name": "Send No Event Reply",
       "parameters": {
-        "promptType": "define",
-        "text": "=={{$json.text}}",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C08NVUQUK8F"
+        },
+        "messageType": "text",
+        "operation": "post",
+        "otherOptions": {},
+        "resource": "message",
+        "select": "channel",
+        "text": "=ℹ️ 此訊息未包含可辨識的日程資訊，未建立日曆事件。\n\n💭 *AI 分析*: _{{$json.reasoning}}_\n\n💡 如需建立日曆事件，請提供明確的日期、時間和活動內容。\n\n_🤖 由 AI 助手自動分析_"
+      },
+      "position": [
+        1168,
+        660
+      ],
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "webhookId": "d3441ad8-9af7-42d5-ad2d-fe30fc0ca8a3"
+    },
+    {
+      "id": "8647c7c5-4e06-482e-8fd8-df39c3077d31",
+      "name": "Analyze Message with AI",
+      "parameters": {
         "messages": {
           "messageValues": [
             {
-              "message": "=你是一個專業的日程管理助手。請分析用戶的 Slack 訊息，提取可能的日程信息。\n\n🎯 **重要原則：每個分析結果只產生一個主要事件，將所有相關活動整合為完整的活動描述**\n\n🔍 **地點偵測規則**：\n1. 移動動詞後的地點：「去XX」、「到XX」、「往XX」、「赴XX」、「前往XX」、「出發到XX」、「飛往XX」\n2. 位置介詞後的地點：「在XX」、「於XX」、「位於XX」、「XX舉行」、「XX進行」、「XX召開」\n3. 常見地點類型：城市/國家、地標/景點、場所、線上場所、建築物\n4. 地點提取優先順序：具體地址 > 建築名稱 > 城市名稱 > 區域名稱\n5. 多地點活動：選擇主要集合地點或最重要的地點作為主要 location\n\n📅 **活動類型識別（重要）**：\n- **全天活動**：\n  - 旅遊、一日遊、出差、休假、節日慶典\n  - 研習營、工作坊、訓練營\n  - 多地點行程活動（即使有集合時間也算全天活動）\n  - 只提到日期沒有具體時間\n- **定時活動**：\n  - 單一地點的會議、簡報\n  - 有明確開始和結束時間的短時間活動\n  - 非旅遊性質的定時聚會\n\n🕐 **當前日期時間基準**：{{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy年MM月dd日 (cccc)', { locale: 'zh-TW' }) }}（台北時間）\n  - 當前年份：{{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy') }}\n  - 當前月份：{{ DateTime.now().setZone('Asia/Taipei').toFormat('MM') }}月\n\n⏰ **時間格式規則**：\n- 全天活動：startDateTime 和 endDateTime 都設為 \"YYYY-MM-DD\"（不包含時間部分），isAllDay: true\n- 定時活動：使用完整的 ISO 8601 格式 \"YYYY-MM-DDTHH:mm:ss+08:00\"，isAllDay: false\n- **年份推斷規則（重要）**：\n  - 如果訊息中明確指定年份，使用該年份\n  - 如果只有月/日沒有年份：\n    - 6月、7月、8月、9月、10月、11月、12月 → 使用 **2025年**\n    - 1月、2月、3月、4月 → 使用 **2026年**\n    - 5月 → 根據具體日期判斷，通常使用 **2025年**\n  - **範例**：「6/14活動」→ 2025-06-14（不是2024年！）\n  - 若完全無法推斷，預設使用 2025 年\n- 時區：Asia/Taipei (+08:00)\n\n⚠️ **重要提醒**：\n- 旅遊、一日遊、多地點活動即使有集合時間，也應該設為全天活動\n- 全天活動的開始和結束時間應該相同，格式為純日期\n\n📋 **詳細描述內容建構**：\n必須包含以下資訊（如果訊息中有提及）：\n1. **集合資訊**：集合時間、集合地點、停車資訊\n2. **完整行程**：按時間順序列出所有活動安排\n3. **費用明細**：各項費用（交通、餐費、門票等）\n4. **參與者資訊**：車手安排、參加人員\n5. **攜帶物品**：需要準備的物品或衣物\n6. **注意事項**：天氣、取消條件、其他重要提醒\n7. **聯絡資訊**：相關連結、參考資料（保持完整網址）\n\n👥 **參與者提取規則**：\n- **重要：attendees 欄位請保持空陣列 []，避免發送 Google Calendar 通知**\n- 所有參與者資訊（包含車手和乘客）都寫在 description 中\n- 這樣可以避免 Google Calendar 自動發送邀請通知\n\n💰 **費用資訊提取**：\n- 交通費、餐費、門票、其他雜費\n- 在 description 中詳細說明各項費用\n\n🔗 **連結處理**：\n- 保持網址完整，不要截斷\n- 如果連結太長，確保包含完整的可點擊網址\n\n🎯 **信心度評估**：\n- 0.9+：完整時間+地點+詳細行程+參與者資訊\n- 0.7-0.9：明確時間和地點，部分詳細資訊\n- 0.5-0.7：基本時間或地點，缺少詳細資訊\n- <0.5：缺乏關鍵信息\n\n請按照以下 JSON 格式回覆，不要添加任何其他文字：\n{\n  \"hasEvent\": true,\n  \"events\": [\n    {\n      \"title\": \"主要活動標題\",\n      \"description\": \"詳細的活動描述，包含完整行程安排、集合資訊、費用明細、參與者資訊、注意事項等\",\n      \"startDateTime\": \"2025-06-29\",\n      \"endDateTime\": \"2025-06-29\", \n      \"isAllDay\": true,\n      \"location\": \"主要集合地點或最重要的地點\",\n      \"attendees\": [],\n      \"confidence\": 0.95\n    }\n  ],\n  \"reasoning\": \"分析原因，說明如何整合多個活動為單一事件，以及信心度評估依據\"\n}\n\n**活動類型判斷範例**：\n- ✅ 全天活動：「三峽瀑布一日遊」→ isAllDay: true, startDateTime: \"2025-06-29\"\n- ✅ 全天活動：「6/14烤肉活動」→ isAllDay: true, startDateTime: \"2025-06-14\"\n- ✅ 全天活動：「工作坊」→ isAllDay: true, startDateTime: \"2025-06-15\"  \n- ✅ 定時活動：「下午2點開會」→ isAllDay: false, startDateTime: \"2025-06-01T14:00:00+08:00\"\n- ✅ 定時活動：「簡報1小時」→ isAllDay: false, startDateTime: \"2025-06-01T14:00:00+08:00\"\n\n**年份判斷重要提醒**：\n- ❌ 錯誤：「6/14活動」→ 2024-06-14\n- ✅ 正確：「6/14活動」→ 2025-06-14\n\n**描述格式建議**：\n使用清晰的結構化格式，將所有參與者資訊寫在描述中：\n```\n集合時間：9:30 a.m.；集合地點：三峽區竹崙路238號（禾煦熊空茶園外碰面+停車）。\n\n行程安排：\n• 上午：參訪禾煦熊空茶園\n• 中午：三峽插角133現烤胡椒雞用餐  \n• 下午：雲森瀑布健行+玩水泡腳\n• 傍晚：三峽老街自由活動\n\n費用：車資200元；餐費200-400元；茶園門票280元（可抵餐點100元）。\n\n車手安排：\n• @小泉：Vivian, Conni, Lucia\n• @bryan：Ting, Vera, 哲瑋\n• @韋成：小張, 謝小玥, 王美惠\n• @Money Yu：其他參與者\n\n注意事項：遇雨取消/改期，請攜帶換洗衣物。\n```\n\n現在請分析以下 Slack 訊息：「={{$json.text}}」\n\n請將整個活動視為一個完整事件，把所有細節、行程安排、參與者資訊都整理在 description 中，直接回覆 JSON 格式，不要包含 ```json 標記。"
+              "message": "=你是一個專業的日程管理助手。請分析用戶的 Slack 訊息，提取可能的日程信息。\n\n🎯 **重要原則：每個分析結果只產生一個主要事件，將所有相關活動整合為完整的活動描述**\n\n⚠️ **非日程訊息處理（最重要）**：\n- 如果訊息完全不包含任何日程、活動、會議、聚會相關內容（例如：問候、閒聊、天氣討論、推薦請求等），**必須**回傳 `hasEvent: false`。\n- 只有在訊息確實提到可辨識的活動/會議/聚會/旅遊等日程相關內容時，才設定 `hasEvent: true`。\n- 不確定時，寧可回傳 `hasEvent: false`，也不要產生空白或無意義的事件。\n\n🔍 **地點偵測規則**：\n1. 移動動詞後的地點：「去XX」、「到XX」、「往XX」、「赴XX」、「前往XX」、「出發到XX」、「飛往XX」\n2. 位置介詞後的地點：「在XX」、「於XX」、「位於XX」、「XX舉行」、「XX進行」、「XX召開」\n3. 地點提取優先順序：具體地址 > 建築名稱 > 城市名稱 > 區域名稱\n4. 多地點活動：選擇主要集合地點或最重要的地點作為主要 location\n\n📅 **活動類型識別**：\n- **全天活動**：旅遊、一日遊、出差、休假、節日慶典、研習營、工作坊、多地點行程（即使有集合時間也算全天）、只提到日期沒有具體時間\n- **定時活動**：單一地點的會議/簡報、有明確開始和結束時間的短時間活動、非旅遊性質的定時聚會\n\n🕐 **當前日期時間基準**：{{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy年MM月dd日 (cccc)', { locale: 'zh-TW' }) }}（台北時間）\n\n⏰ **時間格式規則**：\n- 全天活動：startDateTime 和 endDateTime 都設為 \"YYYY-MM-DD\"，isAllDay: true\n- 定時活動：使用 ISO 8601 格式 \"YYYY-MM-DDTHH:mm:ss+08:00\"，isAllDay: false\n- **年份推斷**：如果訊息中有指定年份就用該年份；如果只有月/日，提到的月份已過去就用下一年，當前月份或之後就用今年。當前日期為 {{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy-MM-dd') }}。若無法推斷，預設使用 {{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy') }} 年。\n- 時區：Asia/Taipei (+08:00)\n- 全天活動的開始和結束時間應該相同，格式為純日期\n\n📋 **描述內容建構**：包含集合資訊、行程安排、費用明細、參與者資訊、攜帶物品、注意事項、相關連結（如訊息中有提及）。\n\n👥 **attendees 欄位請保持空陣列 []**，避免發送 Google Calendar 通知。所有參與者資訊寫在 description 中。\n\n🎯 **信心度評估**：\n- 0.9+：完整時間+地點+詳細行程+參與者\n- 0.7-0.9：明確時間和地點，部分詳細\n- 0.5-0.7：基本時間或地點，缺少詳細\n- <0.5：缺乏關鍵信息\n\n請按照以下 JSON 格式回覆，不要添加任何其他文字：\n{\n  \"hasEvent\": true,\n  \"events\": [\n    {\n      \"title\": \"活動標題\",\n      \"description\": \"詳細描述\",\n      \"startDateTime\": \"YYYY-MM-DD 或 YYYY-MM-DDTHH:mm:ss+08:00\",\n      \"endDateTime\": \"同上\",\n      \"isAllDay\": true,\n      \"location\": \"地點\",\n      \"attendees\": [],\n      \"confidence\": 0.95\n    }\n  ],\n  \"reasoning\": \"分析原因\"\n}\n\n如果沒有日程，回覆：\n{\n  \"hasEvent\": false,\n  \"events\": [],\n  \"reasoning\": \"說明為何沒有日程\"\n}\n\n請分析使用者發送的訊息，直接回覆 JSON 格式，不要包含 ```json 標記。"
             }
           ]
-        }
+        },
+        "promptType": "define",
+        "text": "={{ $json.text }}"
       },
-      "type": "@n8n/n8n-nodes-langchain.chainLlm",
-      "typeVersion": 1.9,
       "position": [
         688,
         464
       ],
-      "id": "8647c7c5-4e06-482e-8fd8-df39c3077d31",
-      "name": "Analyze Message with AI"
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9
     },
     {
-      "parameters": {
-        "operation": "create",
-        "calendar": {
-          "__rl": true,
-          "value": "abc12207@gmail.com",
-          "mode": "list",
-          "cachedResultName": "abc12207@gmail.com"
-        },
-        "start": "={{$json.startDateTime}}",
-        "end": "={{$json.endDateTime}}",
-        "additionalFields": {
-          "allday": "no",
-          "description": "={{$json.description}}",
-          "location": "={{$json.location}}",
-          "maxAttendees": 50,
-          "sendUpdates": "all",
-          "summary": "={{$json.title}}"
-        }
-      },
-      "id": "0f6d6c00-f47a-400f-b443-3b7c0ac88fc8",
-      "name": "Create Timed Calendar Event",
-      "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1.3,
-      "position": [
-        1728,
-        464
-      ],
-      "credentials": {
-        "googleCalendarOAuth2Api": {
-          "id": "ERUGcDCTMJESC4hA",
-          "name": "Google Calendar account"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "conditions": {
-          "options": {
-            "version": 2,
-            "leftValue": "",
-            "caseSensitive": true,
-            "typeValidation": "loose"
-          },
-          "conditions": [
-            {
-              "id": "fbf960d0-2def-463d-9c6b-e9fa9d63368a",
-              "leftValue": "={{ $json.isAllDay }}",
-              "rightValue": "true",
-              "operator": {
-                "type": "string",
-                "operation": "equals",
-                "name": "filter.operator.equals"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "looseTypeValidation": true,
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3,
-      "position": [
-        1504,
-        368
-      ],
-      "id": "1c707ca2-6571-4347-a56b-3e79f85d99bc",
-      "name": "Is All Day Event"
-    },
-    {
-      "parameters": {
-        "authentication": "azureEntraCognitiveServicesOAuth2Api",
-        "model": "gpt-5.2",
-        "options": {}
-      },
-      "type": "@n8n/n8n-nodes-langchain.lmChatAzureOpenAi",
-      "typeVersion": 1,
-      "position": [
-        768,
-        688
-      ],
-      "id": "2dafdd15-fc8c-468f-ab93-caf25ce29c9f",
-      "name": "Azure OpenAI gpt-5.2",
       "credentials": {
         "azureEntraCognitiveServicesOAuth2Api": {
           "id": "82mlP2DDo7j1VGdC",
           "name": "Azure Open AI account Entra ID"
         }
-      }
+      },
+      "id": "2dafdd15-fc8c-468f-ab93-caf25ce29c9f",
+      "name": "Azure OpenAI gpt-5.2",
+      "parameters": {
+        "authentication": "azureEntraCognitiveServicesOAuth2Api",
+        "model": "gpt-5.2",
+        "options": {}
+      },
+      "position": [
+        768,
+        688
+      ],
+      "type": "@n8n/n8n-nodes-langchain.lmChatAzureOpenAi",
+      "typeVersion": 1
     }
   ],
   "pinData": {},
   "connections": {
-    "Slack Message Trigger": {
-      "main": [
-        [
-          {
-            "node": "Filter Valid Messages",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Filter Valid Messages": {
-      "main": [
-        [
-          {
-            "node": "Analyze Message with AI",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Parse AI Response": {
-      "main": [
-        [
-          {
-            "node": "Check Confidence Score",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Check Confidence Score": {
-      "main": [
-        [
-          {
-            "node": "Is All Day Event",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Send Low Confidence Alert",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create All Day Calendar Event": {
-      "main": [
-        [
-          {
-            "node": "Send Success Notification",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Analyze Message with AI": {
       "main": [
         [
           {
+            "index": 0,
             "node": "Parse AI Response",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Create Timed Calendar Event": {
-      "main": [
-        [
-          {
-            "node": "Send Success Notification",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Is All Day Event": {
-      "main": [
-        [
-          {
-            "node": "Create All Day Calendar Event",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Create Timed Calendar Event",
-            "type": "main",
-            "index": 0
+            "type": "main"
           }
         ]
       ]
@@ -464,9 +376,89 @@
       "ai_languageModel": [
         [
           {
+            "index": 0,
             "node": "Analyze Message with AI",
-            "type": "ai_languageModel",
-            "index": 0
+            "type": "ai_languageModel"
+          }
+        ]
+      ]
+    },
+    "Check Confidence Score": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Create Calendar Event",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Send Low Confidence Alert",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Create Calendar Event": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Send Success Notification",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Filter Valid Messages": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Analyze Message with AI",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Has Valid Event": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Check Confidence Score",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Send No Event Reply",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Has Valid Event",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Slack Message Trigger": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Filter Valid Messages",
+            "type": "main"
           }
         ]
       ]
@@ -485,7 +477,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "versionId": "4a4b98a1-4eef-4bd9-b8b1-7f008caa8acc",
+  "versionId": "ec314c98-7173-4308-bc41-511c4fb64f15",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"
