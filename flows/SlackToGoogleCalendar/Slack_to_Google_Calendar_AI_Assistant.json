@@ -200,13 +200,14 @@
       },
       "id": "9b1a9087-efb1-4346-9680-09673497b489",
       "name": "Create Calendar Event",
+      "onError": "continueErrorOutput",
       "parameters": {
         "additionalFields": {
           "allday": "={{ $json.isAllDay ? 'yes' : 'no' }}",
           "description": "={{$json.description}}",
           "location": "={{$json.location}}",
           "maxAttendees": 50,
-          "sendUpdates": "all",
+          "sendUpdates": "none",
           "summary": "={{$json.title}}"
         },
         "calendar": {
@@ -254,7 +255,7 @@
       ],
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
-      "webhookId": "f4ac4491-ad91-4786-aa05-2d311db6da10"
+      "webhookId": "83e465f1-dfb8-478f-8ac5-ba3ef5c8693c"
     },
     {
       "credentials": {
@@ -284,7 +285,7 @@
       ],
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
-      "webhookId": "0cac5954-d0f4-48ee-aa52-be13e576a85c"
+      "webhookId": "5a05ebc2-d32e-4d41-bac6-75de9245d2d9"
     },
     {
       "credentials": {
@@ -306,7 +307,7 @@
         "otherOptions": {},
         "resource": "message",
         "select": "channel",
-        "text": "=ℹ️ 此訊息未包含可辨識的日程資訊，未建立日曆事件。\n\n💭 *AI 分析*: _{{$json.reasoning}}_\n\n💡 如需建立日曆事件，請提供明確的日期、時間和活動內容。\n\n_🤖 由 AI 助手自動分析_"
+        "text": "={{ $json.status === 'error' ? '❌ 處理訊息時發生錯誤\\n\\n💭 *錯誤訊息*: _' + ($json.error || '未知錯誤') + '_\\n\\n💡 請稍後重試，或聯繫管理員。' : 'ℹ️ 此訊息未包含可辨識的日程資訊，未建立日曆事件。\\n\\n💭 *AI 分析*: _' + ($json.reasoning || '無') + '_\\n\\n💡 如需建立日曆事件，請提供明確的日期、時間和活動內容。' }}\n\n_🤖 由 AI 助手自動分析_"
       },
       "position": [
         1168,
@@ -314,11 +315,42 @@
       ],
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
-      "webhookId": "d3441ad8-9af7-42d5-ad2d-fe30fc0ca8a3"
+      "webhookId": "4320ec41-4ba0-4434-8d28-f05e998226b4"
+    },
+    {
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      },
+      "id": "send-error-notification",
+      "name": "Send Error Notification",
+      "parameters": {
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C08NVUQUK8F"
+        },
+        "messageType": "text",
+        "operation": "post",
+        "otherOptions": {},
+        "resource": "message",
+        "select": "channel",
+        "text": "=❌ *Workflow 執行錯誤*\n\n💭 *錯誤訊息*: _{{ $json.error && $json.error.message ? $json.error.message : ($json.message || '未知錯誤') }}_\n\n📋 請檢查 n8n 執行紀錄以取得完整錯誤資訊。\n\n_🤖 由 AI 助手自動通報_"
+      },
+      "position": [
+        1616,
+        760
+      ],
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "webhookId": "02e75cad-6313-4eea-ad2a-bd1b53dde156"
     },
     {
       "id": "8647c7c5-4e06-482e-8fd8-df39c3077d31",
       "name": "Analyze Message with AI",
+      "onError": "continueErrorOutput",
       "parameters": {
         "messages": {
           "messageValues": [
@@ -369,6 +401,13 @@
             "node": "Parse AI Response",
             "type": "main"
           }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Send Error Notification",
+            "type": "main"
+          }
         ]
       ]
     },
@@ -407,6 +446,13 @@
           {
             "index": 0,
             "node": "Send Success Notification",
+            "type": "main"
+          }
+        ],
+        [
+          {
+            "index": 0,
+            "node": "Send Error Notification",
             "type": "main"
           }
         ]
@@ -471,13 +517,13 @@
     "saveDataErrorExecution": "all",
     "saveDataSuccessExecution": "all",
     "executionTimeout": 3600,
-    "timezone": "UTC",
+    "timezone": "Asia/Taipei",
     "executionOrder": "v1",
     "binaryMode": "separate",
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "versionId": "ec314c98-7173-4308-bc41-511c4fb64f15",
+  "versionId": "ee7f9a49-a52d-468f-b6d5-89b67bd7774e",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"
