@@ -32,35 +32,70 @@
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
             {
-              "value1": "=={{$json.channel}}",
-              "operation": "contains",
-              "value2": "C08NVUQUK8F"
+              "id": "cond-channel",
+              "leftValue": "={{ $json.channel }}",
+              "rightValue": "C08NVUQUK8F",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
             },
             {
-              "value1": "={{$json.type}}",
-              "value2": "message"
+              "id": "cond-type",
+              "leftValue": "={{ $json.type }}",
+              "rightValue": "message",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
             },
             {
-              "value1": "={{$json.bot_id}}",
-              "operation": "isEmpty"
+              "id": "cond-bot",
+              "leftValue": "={{ $json.bot_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
             },
             {
-              "value1": "={{$json.subtype}}",
-              "operation": "isEmpty"
+              "id": "cond-subtype",
+              "leftValue": "={{ $json.subtype }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
             },
             {
-              "value1": "={{$json.thread_ts}}",
-              "operation": "isEmpty"
+              "id": "cond-thread",
+              "leftValue": "={{ $json.thread_ts }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "empty",
+                "singleValue": true
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "filter-slack-messages",
       "name": "Filter Valid Messages",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
+      "typeVersion": 2.3,
       "position": [
         464,
         464
@@ -82,18 +117,31 @@
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "conditions": [
             {
-              "value1": "={{parseFloat($json.confidence) >= 0.7}}",
-              "value2": true
+              "id": "cond-conf",
+              "leftValue": "={{ $json.confidence }}",
+              "rightValue": 0.7,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
             }
-          ]
-        }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
       },
       "id": "46555180-f9e7-44c4-b114-f941adc13adc",
       "name": "Check Confidence Score",
       "type": "n8n-nodes-base.if",
-      "typeVersion": 1,
+      "typeVersion": 2.3,
       "position": [
         1280,
         464
@@ -102,6 +150,7 @@
     },
     {
       "parameters": {
+        "operation": "create",
         "calendar": {
           "__rl": true,
           "value": "abc12207@gmail.com",
@@ -122,7 +171,7 @@
       "id": "9b1a9087-efb1-4346-9680-09673497b489",
       "name": "Create All Day Calendar Event",
       "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1,
+      "typeVersion": 1.3,
       "position": [
         1728,
         272
@@ -136,15 +185,22 @@
     },
     {
       "parameters": {
-        "channel": "=C08NVUQUK8F",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C08NVUQUK8F"
+        },
+        "messageType": "text",
         "text": "=✅ **日曆事件已成功創建！**  📅 **{{$json.summary}}** {{$json.start.date ?    '🗓️ 日期: ' + DateTime.fromFormat($json.start.date, 'yyyy-MM-dd').toFormat('MM月dd日 (cccc)', {locale: 'zh-TW'}) :    '🕐 時間: ' + DateTime.fromISO($json.start.dateTime).toFormat('MM月dd日 (cccc) HH:mm', {locale: 'zh-TW'}) + ' - ' + DateTime.fromISO($json.end.dateTime).toFormat('HH:mm', {locale: 'zh-TW'}) }} 📍 地點: {{$json.location || '未指定'}} {{$json.description ? '📝 備註: ' + $json.description.split('📋 來源信息：')[0].trim() : ''}}  🔗 [查看事件]({{$json.htmlLink}})  _🤖 由 AI 助手自動創建 • 事件ID: {{$json.id}}_",
-        "otherOptions": {},
-        "attachments": []
+        "otherOptions": {}
       },
       "id": "d8a44d97-e601-40ea-a28b-cb847da06bcf",
       "name": "Send Success Notification",
       "type": "n8n-nodes-base.slack",
-      "typeVersion": 1,
+      "typeVersion": 2.4,
       "position": [
         1936,
         368
@@ -154,19 +210,27 @@
           "id": "H8RWtu7aOphSXGk5",
           "name": "Slack account"
         }
-      }
+      },
+      "webhookId": "1b4b73df-9575-454e-8d3b-ae67fe5f6d5d"
     },
     {
       "parameters": {
-        "channel": "=C08NVUQUK8F",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "C08NVUQUK8F"
+        },
+        "messageType": "text",
         "text": "=⚠️ *發現可能的日程，但信心度較低*\n\n📝 *{{$json.title}}*\n🕐 時間: {{$json.startDateTime}}\n📍 地點: {{$json.location || '未指定'}}\n📊 AI 信心度: {{$json.confidenceDisplay}} ({{$json.confidence >= 0.7 ? '高' : '低'}}信心度)\n\n💭 *AI 分析*: _{{$json.reasoning}}_\n\n💡 *建議*: 如需創建日曆事件，請發送更詳細的訊息（包含確切時間、地點等資訊）\n\n_🤖 此為 AI 助手低信心度提醒，不會自動創建事件_",
-        "otherOptions": {},
-        "attachments": []
+        "otherOptions": {}
       },
       "id": "a19c1160-28c0-4c90-acb2-c0cfff0e2fa9",
       "name": "Send Low Confidence Alert",
       "type": "n8n-nodes-base.slack",
-      "typeVersion": 1,
+      "typeVersion": 2.4,
       "position": [
         1504,
         560
@@ -176,7 +240,8 @@
           "id": "H8RWtu7aOphSXGk5",
           "name": "Slack account"
         }
-      }
+      },
+      "webhookId": "6b17aa82-0b9b-46d5-8118-b68ba00cad46"
     },
     {
       "parameters": {
@@ -191,7 +256,7 @@
         }
       },
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
-      "typeVersion": 1.6,
+      "typeVersion": 1.9,
       "position": [
         688,
         464
@@ -201,6 +266,7 @@
     },
     {
       "parameters": {
+        "operation": "create",
         "calendar": {
           "__rl": true,
           "value": "abc12207@gmail.com",
@@ -221,7 +287,7 @@
       "id": "0f6d6c00-f47a-400f-b443-3b7c0ac88fc8",
       "name": "Create Timed Calendar Event",
       "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1,
+      "typeVersion": 1.3,
       "position": [
         1728,
         464
@@ -237,10 +303,10 @@
       "parameters": {
         "conditions": {
           "options": {
-            "caseSensitive": true,
+            "version": 2,
             "leftValue": "",
-            "typeValidation": "loose",
-            "version": 2
+            "caseSensitive": true,
+            "typeValidation": "loose"
           },
           "conditions": [
             {
@@ -260,7 +326,7 @@
         "options": {}
       },
       "type": "n8n-nodes-base.if",
-      "typeVersion": 2.2,
+      "typeVersion": 2.3,
       "position": [
         1504,
         368
@@ -419,7 +485,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "versionId": "75e623da-96e2-4587-9060-32cf5948f47c",
+  "versionId": "4a4b98a1-4eef-4bd9-b8b1-7f008caa8acc",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"
