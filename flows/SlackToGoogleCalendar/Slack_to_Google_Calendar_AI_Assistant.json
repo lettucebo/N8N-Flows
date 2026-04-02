@@ -228,6 +228,20 @@
       "typeVersion": 1.3
     },
     {
+      "id": "build-success-blocks",
+      "name": "Build Success Blocks",
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nlet dateTimeText;\nif (data.start && data.start.date) {\n  const dt = DateTime.fromFormat(data.start.date, 'yyyy-MM-dd');\n  dateTimeText = dt.toFormat('MM月dd日 (cccc)', { locale: 'zh-TW' });\n} else if (data.start && data.start.dateTime) {\n  const start = DateTime.fromISO(data.start.dateTime).setZone('Asia/Taipei');\n  const end = DateTime.fromISO(data.end.dateTime).setZone('Asia/Taipei');\n  dateTimeText = start.toFormat('MM月dd日 (cccc) HH:mm', { locale: 'zh-TW' }) + ' - ' + end.toFormat('HH:mm', { locale: 'zh-TW' });\n} else {\n  dateTimeText = '未指定';\n}\n\nconst descPreview = data.description ? data.description.split('📋 來源信息：')[0].trim() : '';\n\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: '✅ 日曆事件已成功建立！', emoji: true } },\n  { type: 'section', text: { type: 'mrkdwn', text: `📅 *${data.summary}*` } },\n  { type: 'section', fields: [\n    { type: 'mrkdwn', text: `*🗓️ 日期/時間*\\n${dateTimeText}` },\n    { type: 'mrkdwn', text: `*📍 地點*\\n${data.location || '未指定'}` }\n  ]},\n  { type: 'divider' }\n];\n\nif (descPreview) {\n  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `📝 *備註*\\n${descPreview}` } });\n  blocks.push({ type: 'divider' });\n}\n\nblocks.push({ type: 'actions', elements: [{\n  type: 'button',\n  text: { type: 'plain_text', text: '📎 查看事件', emoji: true },\n  style: 'primary',\n  url: data.htmlLink,\n  action_id: 'view_event'\n}]});\n\nblocks.push({ type: 'divider' });\nblocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `🤖 由 AI 助手自動建立 • 事件ID: ${data.id}` }] });\n\nreturn [{ json: { blocks: JSON.stringify(blocks), fallbackText: `✅ 日曆事件已成功建立！ ${data.summary}` } }];",
+        "mode": "runOnceForAllItems"
+      },
+      "position": [
+        1840,
+        368
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
       "credentials": {
         "slackApi": {
           "id": "H8RWtu7aOphSXGk5",
@@ -236,26 +250,42 @@
       },
       "id": "d8a44d97-e601-40ea-a28b-cb847da06bcf",
       "name": "Send Success Notification",
+      "onError": "continueErrorOutput",
       "parameters": {
+        "blocksUi": "={{ $json.blocks }}",
         "channelId": {
           "__rl": true,
           "mode": "id",
           "value": "C08NVUQUK8F"
         },
-        "messageType": "text",
+        "messageType": "block",
         "operation": "post",
         "otherOptions": {},
         "resource": "message",
         "select": "channel",
-        "text": "=✅ *日曆事件已成功創建！*\n\n📅 *{{$json.summary}}*\n{{$json.start.date ? '🗓️ 日期: ' + DateTime.fromFormat($json.start.date, 'yyyy-MM-dd').toFormat('MM月dd日 (cccc)', {locale: 'zh-TW'}) : '🕐 時間: ' + DateTime.fromISO($json.start.dateTime).setZone('Asia/Taipei').toFormat('MM月dd日 (cccc) HH:mm', {locale: 'zh-TW'}) + ' - ' + DateTime.fromISO($json.end.dateTime).setZone('Asia/Taipei').toFormat('HH:mm', {locale: 'zh-TW'})}}\n📍 地點: {{$json.location || '未指定'}}\n{{$json.description ? '📝 備註: ' + $json.description.split('📋 來源信息：')[0].trim() : ''}}\n\n🔗 <{{$json.htmlLink}}|查看事件>\n\n_🤖 由 AI 助手自動創建 • 事件ID: {{$json.id}}_"
+        "text": "={{ $json.fallbackText }}"
       },
       "position": [
-        1840,
+        2064,
         368
       ],
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
-      "webhookId": "83e465f1-dfb8-478f-8ac5-ba3ef5c8693c"
+      "webhookId": "61ac6b8e-271f-464e-bbb5-5debac9b225f"
+    },
+    {
+      "id": "build-low-confidence-blocks",
+      "name": "Build Low Confidence Blocks",
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: '⚠️ 發現可能的日程，但信心度較低', emoji: true } },\n  { type: 'section', text: { type: 'mrkdwn', text: `📝 *${data.title}*` } },\n  { type: 'section', fields: [\n    { type: 'mrkdwn', text: `*🕐 時間*\\n${data.startDateTime}` },\n    { type: 'mrkdwn', text: `*📍 地點*\\n${data.location || '未指定'}` }\n  ]},\n  { type: 'section', fields: [\n    { type: 'mrkdwn', text: `*📊 AI 信心度*\\n${data.confidenceDisplay} (低信心度)` }\n  ]},\n  { type: 'divider' },\n  { type: 'section', text: { type: 'mrkdwn', text: `💭 *AI 分析*\\n_${data.reasoning}_` } },\n  { type: 'divider' },\n  { type: 'section', text: { type: 'mrkdwn', text: '💡 如需建立日曆事件，請發送更詳細的訊息（包含確切時間、地點等資訊）' } },\n  { type: 'divider' },\n  { type: 'context', elements: [{ type: 'mrkdwn', text: '🤖 此為 AI 助手低信心度提醒，不會自動建立事件' }] }\n];\n\nreturn [{ json: { blocks: JSON.stringify(blocks), fallbackText: `⚠️ 發現可能的日程: ${data.title} (信心度: ${data.confidenceDisplay})` } }];",
+        "mode": "runOnceForAllItems"
+      },
+      "position": [
+        1504,
+        560
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
     },
     {
       "credentials": {
@@ -266,26 +296,28 @@
       },
       "id": "a19c1160-28c0-4c90-acb2-c0cfff0e2fa9",
       "name": "Send Low Confidence Alert",
+      "onError": "continueErrorOutput",
       "parameters": {
+        "blocksUi": "={{ $json.blocks }}",
         "channelId": {
           "__rl": true,
           "mode": "id",
           "value": "C08NVUQUK8F"
         },
-        "messageType": "text",
+        "messageType": "block",
         "operation": "post",
         "otherOptions": {},
         "resource": "message",
         "select": "channel",
-        "text": "=⚠️ *發現可能的日程，但信心度較低*\n\n📝 *{{$json.title}}*\n🕐 時間: {{$json.startDateTime}}\n📍 地點: {{$json.location || '未指定'}}\n📊 AI 信心度: {{$json.confidenceDisplay}} ({{$json.confidence >= 0.7 ? '高' : '低'}}信心度)\n\n💭 *AI 分析*: _{{$json.reasoning}}_\n\n💡 *建議*: 如需創建日曆事件，請發送更詳細的訊息（包含確切時間、地點等資訊）\n\n_🤖 此為 AI 助手低信心度提醒，不會自動創建事件_"
+        "text": "={{ $json.fallbackText }}"
       },
       "position": [
-        1616,
+        1728,
         560
       ],
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
-      "webhookId": "5a05ebc2-d32e-4d41-bac6-75de9245d2d9"
+      "webhookId": "9d0b3972-5ba9-4bef-9688-0615ff2022d6"
     },
     {
       "credentials": {
@@ -307,7 +339,7 @@
         "otherOptions": {},
         "resource": "message",
         "select": "channel",
-        "text": "={{ $json.status === 'error' ? '❌ 處理訊息時發生錯誤\\n\\n💭 *錯誤訊息*: _' + ($json.error || '未知錯誤') + '_\\n\\n💡 請稍後重試，或聯繫管理員。' : 'ℹ️ 此訊息未包含可辨識的日程資訊，未建立日曆事件。\\n\\n💭 *AI 分析*: _' + ($json.reasoning || '無') + '_\\n\\n💡 如需建立日曆事件，請提供明確的日期、時間和活動內容。' }}\n\n_🤖 由 AI 助手自動分析_"
+        "text": "={{ $json.status === 'error' ? '❌ 處理訊息時發生錯誤\\n\\n💭 *錯誤訊息*: _' + ($json.error || '未知錯誤') + '_\\n\\n💡 請稍後重試，或聯繫管理員。' : 'ℹ️ 此訊息未包含可辨識的日程資訊，未建立日曆事件。\\n\\n💭 *AI 分析*: _' + ($json.reasoning || '無') + '_\\n\\n💡 如需建立日曆事件，請提供明確的日期、時間和活動內容。' }}\\n\\n_🤖 由 AI 助手自動分析_"
       },
       "position": [
         1168,
@@ -315,7 +347,7 @@
       ],
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
-      "webhookId": "4320ec41-4ba0-4434-8d28-f05e998226b4"
+      "webhookId": "80cdfb45-e914-486c-a0e5-83f4cdf03bb5"
     },
     {
       "credentials": {
@@ -340,12 +372,12 @@
         "text": "=❌ *Workflow 執行錯誤*\n\n💭 *錯誤訊息*: _{{ $json.error && $json.error.message ? $json.error.message : ($json.message || '未知錯誤') }}_\n\n📋 請檢查 n8n 執行紀錄以取得完整錯誤資訊。\n\n_🤖 由 AI 助手自動通報_"
       },
       "position": [
-        1616,
+        1840,
         760
       ],
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
-      "webhookId": "02e75cad-6313-4eea-ad2a-bd1b53dde156"
+      "webhookId": "ee24ca10-2b45-4fa7-ae5b-675bea554869"
     },
     {
       "id": "8647c7c5-4e06-482e-8fd8-df39c3077d31",
@@ -422,6 +454,28 @@
         ]
       ]
     },
+    "Build Low Confidence Blocks": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Send Low Confidence Alert",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Build Success Blocks": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Send Success Notification",
+            "type": "main"
+          }
+        ]
+      ]
+    },
     "Check Confidence Score": {
       "main": [
         [
@@ -434,7 +488,7 @@
         [
           {
             "index": 0,
-            "node": "Send Low Confidence Alert",
+            "node": "Build Low Confidence Blocks",
             "type": "main"
           }
         ]
@@ -445,7 +499,7 @@
         [
           {
             "index": 0,
-            "node": "Send Success Notification",
+            "node": "Build Success Blocks",
             "type": "main"
           }
         ],
@@ -498,6 +552,30 @@
         ]
       ]
     },
+    "Send Low Confidence Alert": {
+      "main": [
+        [],
+        [
+          {
+            "index": 0,
+            "node": "Send Error Notification",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Send Success Notification": {
+      "main": [
+        [],
+        [
+          {
+            "index": 0,
+            "node": "Send Error Notification",
+            "type": "main"
+          }
+        ]
+      ]
+    },
     "Slack Message Trigger": {
       "main": [
         [
@@ -523,7 +601,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "versionId": "ee7f9a49-a52d-468f-b6d5-89b67bd7774e",
+  "versionId": "375084f7-d6d7-437a-8e0f-fbbc643411d0",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"

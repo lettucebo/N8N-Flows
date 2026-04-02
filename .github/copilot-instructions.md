@@ -110,3 +110,11 @@ This repo has 7 n8n-specific skills under `.github/skills/`. They are auto-loade
 - `n8n-node-configuration` — Node config patterns
 - `n8n-validation-expert` — Validation error interpretation
 - `n8n-workflow-patterns` — Workflow architecture patterns
+
+# Principles
+## Reviews
+完成後進行三輪驗證：
+
+1. 第一輪：重新審視你所有要做的事情，確認你都百分之百滿意。若沒有到百分之百滿意，就請持續修正，直到百分之百滿意為止。
+2. 第二輪：進行第二輪審核，看看有任何你認為需要再審核的地方。
+3. 第三輪：針對第一輪與第二輪的審核結果，再重新審核一遍。
