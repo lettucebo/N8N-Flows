@@ -1,8 +1,10 @@
 # Slack to Google Calendar AI Assistant — Implementation Guide
 
-> **Source of truth**: `Slack_to_Google_Calendar_AI_Assistant.json` (workflow id `I2dch7ZKvBvX6GVC`).
-> If this document and the JSON disagree, the JSON wins. Every node name, version, and parameter
-> below was read from that file.
+> **Reference snapshot**: `Slack_to_Google_Calendar_AI_Assistant.json` (workflow id `I2dch7ZKvBvX6GVC`).
+> This document is verified against that export, so if the two disagree, the export wins.
+> Operationally the live n8n instance is the source of truth — change the workflow there, then sync
+> the export back into this repository. Every node name, version, and parameter below was read from
+> that file.
 
 繁體中文版本：[README.zh-tw.md](./README.zh-tw.md)
 
@@ -17,7 +19,9 @@ An n8n workflow that turns Slack messages into Google Calendar events:
 - Replies in Slack with one of four outcomes for every message that passes the filter: success, low
   confidence, no event, and error. Messages rejected by the filter get no reply at all.
 
-Status: **active**. All user-facing text is Traditional Chinese (zh-TW); node names are English.
+Status: **active**. Fixed notification copy is Traditional Chinese (zh-TW); dynamic content — event
+titles, the original Slack message, model reasoning — keeps whatever language it arrived in. Node
+names are English.
 
 ## 🏗️ System Architecture
 
@@ -148,8 +152,10 @@ output — a model failure surfaces on the chain node's error output.
 
 **Type**: `n8n-nodes-base.code` v2 · `mode: runOnceForAllItems`
 
-The workflow's normalisation layer. It never throws; every failure path returns an item with a
-`status` field so downstream IF nodes can route it.
+The workflow's normalisation layer. Expected failures — missing input, unparseable JSON, bad dates —
+are converted into an item carrying a `status` field so downstream IF nodes can route them. It is
+not exception-proof: `aiOutput.hasEvent` is read outside any `try`, so a model reply that parses to
+valid JSON `null` still fails the node with no Slack reply.
 
 1. Guards missing input and missing model output → `status: 'error'`
 2. Strips code fences (` ```json `) before `JSON.parse`, because the model does not always comply
@@ -157,7 +163,8 @@ The workflow's normalisation layer. It never throws; every failure path returns 
 4. Returns `status: 'no_event'` when `hasEvent` is false or `events` is empty
 5. Per event:
    - Skips events missing `title` or `startDateTime` (returns `null`, filtered out afterwards)
-   - All-day when `isAllDay === true` or neither date contains `T`; validated against `^\d{4}-\d{2}-\d{2}$`
+   - All-day when `isAllDay === true` or neither date contains `T`; the normalised `startDateTime`
+     (not the end) is validated against `^\d{4}-\d{2}-\d{2}$`
    - Timed events are parsed with `new Date()`; if `end <= start`, end is pushed to start + 1 hour.
      Both are emitted as UTC ISO strings via `toISOString()` — the workflow timezone converts them back
    - On any date failure, falls back to tomorrow as an all-day event
@@ -165,11 +172,16 @@ The workflow's normalisation layer. It never throws; every failure path returns 
    - Builds the description with a `📋 來源信息：` block (original message, sender, channel, event type, confidence, reasoning)
    - Sets `status` to `high_confidence` when `confidence >= 0.7`, otherwise `low_confidence`
 6. Returns `status: 'no_event'` if every event was rejected
-7. A surrounding `try/catch` turns any unexpected failure into `status: 'error'` — the node never throws
+7. A `try/catch` around event processing converts unexpected failures **inside that block** into
+   `status: 'error'`
 
-Output fields consumed downstream: `eventIndex`, `title`, `description`, `startDateTime`,
-`endDateTime`, `isAllDay`, `location`, `attendees`, `confidence`, `confidenceDisplay`, `reasoning`,
+Output fields emitted: `eventIndex`, `title`, `description`, `startDateTime`, `endDateTime`,
+`isAllDay`, `location`, `attendees`, `confidence`, `confidenceDisplay`, `reasoning`,
 `originalMessage`, `slackUser`, `slackChannel`, `slackTimestamp`, `status`.
+
+Not everything emitted is consumed. `attendees` is computed and filtered but **never mapped into
+`Create Calendar Event`**, and `eventIndex` / `originalMessage` / `slackUser` / `slackChannel` /
+`slackTimestamp` are carried for context only. See the data contract table for what is actually read.
 
 ### 6. Has Valid Event
 
@@ -214,9 +226,10 @@ additionalFields:
   sendUpdates:  none
 ```
 
-`sendUpdates: none` means **no invitation emails are sent**, which is consistent with the prompt
-forcing `attendees: []`. All-day events are driven by the `allday` ternary — the value must be the
-string `'yes'`/`'no'`, not a boolean.
+`sendUpdates: none` means **no invitation emails are sent**. Note that `attendees` is not part of
+this parameter set at all — the field computed by `Parse AI Response` is never mapped here, so the
+event is always created without guests regardless of what the model returns. All-day events are
+driven by the `allday` ternary — the value must be the string `'yes'`/`'no'`, not a boolean.
 
 ### 9. Build Success Blocks
 
@@ -295,8 +308,9 @@ Note the `&&` guard instead of `?.`: this is an n8n expression, not Code node Ja
 | any error output | Send Error Notification | `error.message` or `message` |
 
 `Parse AI Response` is the **only** node that reaches backwards by node name
-(`$('Slack Message Trigger')`) — it is the single such reference in the whole export. Renaming
-`Slack Message Trigger` therefore breaks that node, and n8n will not warn you.
+(`$('Slack Message Trigger')`) — it is the single such reference in the whole export. That name is
+therefore a hard dependency: after renaming the trigger, re-check this Code node and update the
+string if it was not rewritten for you.
 
 ## 🔀 Routing and Error Handling
 
@@ -305,10 +319,13 @@ into `Send Error Notification`:
 
 | Node | Why it can fail |
 |---|---|
-| `Analyze Message with AI` | model timeout, quota, malformed response |
+| `Analyze Message with AI` | model or API timeout, authentication failure, quota exhaustion |
 | `Create Calendar Event` | OAuth expiry, invalid date range, calendar permissions |
 | `Send Success Notification` | Slack rate limit, invalid Block Kit payload |
 | `Send Low Confidence Alert` | same as above |
+
+A malformed model reply does **not** take this route. It is caught in `Parse AI Response`, becomes
+`status: 'error'`, and reaches Slack through `Send No Event Reply` instead.
 
 `Send No Event Reply` and `Azure OpenAI gpt-5.2` deliberately have no error output. When adding a
 fallible node to the main path, wire its error output to the same sink.
@@ -347,8 +364,9 @@ committed. Azure OpenAI uses Entra ID (OAuth2), not an API key.
 
 ## 🔧 Slack App Configuration
 
-This workflow uses the **Slack Trigger node**, which subscribes through n8n — there is no manually
-configured webhook URL.
+The workflow uses the **Slack Trigger node**, which is served as an n8n webhook — the node carries a
+`webhookId`. Copy its production Webhook URL from the n8n editor into the Slack app's
+**Event Subscriptions → Request URL**, then subscribe to `message.channels`.
 
 ```yaml
 Bot Token Scopes (required):
@@ -374,13 +392,19 @@ Post these in the monitored channel and check the execution log.
 | Input (zh-TW) | Expected path | Expected result |
 |---|---|---|
 | `5/20 去名古屋玩` | high confidence | all-day event, `startDateTime` = `YYYY-05-20` (year inferred), location 名古屋, `📎 查看事件` button |
-| `明天下午 2 點團隊會議` | high confidence | timed event 14:00–15:00 Taipei time, success blocks |
-| `可能會有個會議` | low confidence | no calendar event, `⚠️ 發現可能的日程` alert |
+| `明天下午 2 點團隊會議` | high confidence | timed event; the exact end time is whatever the model returns, and `Parse AI Response` only forces start + 1 h when `end <= start` |
+| `可能會有個會議` | low confidence *or* `no_event` | no calendar event; the prompt tells the model to prefer `hasEvent: false` when unsure, so either reply is correct |
 | `今天天氣真好` | `no_event` | `ℹ️ 此訊息未包含可辨識的日程資訊` reply |
-| any message from the bot itself | filtered out | no execution, no reply |
-| a thread reply | filtered out | no execution, no reply |
+| any message from the bot itself | filtered out | execution starts and stops at `Filter Valid Messages`; no reply |
+| a thread reply | filtered out | execution starts and stops at `Filter Valid Messages`; no reply |
 
-Year inference follows the prompt rule: a month already past resolves to next year.
+Rows above depend on model output, so treat them as expected behaviour to check rather than
+guarantees. Year inference follows the prompt rule: a month already past resolves to next year.
+
+⚠️ The prompt tells the model to use the **same** date for an all-day start and end, and
+`Create Calendar Event` passes both through untouched. Google Calendar treats the all-day `end`
+date as exclusive, so verify against a real execution whether an all-day event lands on the
+intended day before trusting this path.
 
 ## 🚨 Known Behaviours and Gotchas
 
@@ -389,24 +413,27 @@ Year inference follows the prompt rule: a month already past resolves to next ye
 2. **All-day flag** — `additionalFields.allday` must receive `'yes'`/`'no'` strings. A correct
    all-day event comes back from Google as `"start": { "date": "YYYY-MM-DD" }`; if you see
    `"start": { "dateTime": ... }` the flag did not take effect.
-3. **Confidence is a float** — `Parse AI Response` runs `parseFloat(event.confidence) || 0.5`, and
-   the IF node compares with `type: number`. Leaving it as a string breaks the comparison.
+3. **Confidence is a float** — `Parse AI Response` runs `parseFloat(event.confidence) || 0.5` so the
+   value reaching the IF node is already numeric. The IF node also runs `typeValidation: loose`, so
+   do not rely on coercion; keep the explicit `parseFloat`.
 4. **Block Kit must be stringified** — `blocksUi` receives `JSON.stringify(blocks)`. Every Block Kit
    message in this repository uses that form.
-5. **No invitations are sent** — `sendUpdates: none` plus `attendees: []` from the prompt. Attendee
-   information appears only in the event description. (`CHANGELOG.md` 1.0.3 claims `sendUpdates: all`
-   and configured reminders; the JSON has neither.)
-6. **Filter failures are silent** — no Slack reply when `Filter Valid Messages` rejects a message.
-7. **Expressions have no optional chaining** — use `$json.a && $json.a.b`. Code nodes are plain
-   JavaScript and may use `?.`.
+5. **No invitations are sent** — `sendUpdates: none`, and `attendees` is never mapped into
+   `Create Calendar Event` at all. Attendee information appears only in the event description.
+   (`CHANGELOG.md` 1.0.3 claims `sendUpdates: all` and configured reminders; the JSON has neither.)
+6. **Filter failures are silent** — the execution runs but stops at `Filter Valid Messages`, and no
+   Slack reply is sent.
+7. **Expression style** — this workflow writes `$json.a && $json.a.b` in expressions rather than
+   `?.`. Keep that style for consistency. Code nodes are plain JavaScript and use `?.` freely.
 
 ## 🔍 Troubleshooting
 
 | Symptom | Where to look |
 |---|---|
-| No execution at all | Slack trigger credential; bot membership in the channel; `Filter Valid Messages` conditions |
+| No execution at all | Slack trigger credential; the Request URL registered in Slack Event Subscriptions; bot membership in the channel; whether the workflow is active |
+| Execution starts then stops immediately | `Filter Valid Messages` — one of the five conditions rejected the message |
 | Execution stops after the AI node | `Analyze Message with AI` error output → check the Slack error message |
-| `AI 回應解析失敗` | The model wrapped its JSON in prose or fences — inspect `rawResponse` in the item |
+| `AI 回應解析失敗` | Ordinary ` ```json ` fences are stripped before parsing, so this means invalid JSON or surrounding prose — inspect `rawResponse`. It surfaces through `Send No Event Reply`, not the AI node's error output |
 | Event created at the wrong time | `Parse AI Response` date branch; confirm workflow timezone is `Asia/Taipei` |
 | Low confidence alert when it should succeed | Compare `confidence` in the item against both threshold locations |
 | Slack message posts as raw JSON | `messageType` is `text` while blocks were supplied, or `blocksUi` got an array instead of a string |
@@ -431,6 +458,7 @@ with emoji prefixes (`❌`, `⚠️`, `✅`, `📅`, `ℹ️`).
 ## 🆕 Possible Extensions (not implemented)
 
 - Meeting-room booking lookup before event creation
-- Real attendee resolution from Slack user ids (requires re-enabling `sendUpdates`)
+- Real attendee resolution from Slack user ids — requires mapping `attendees` into
+  `Create Calendar Event` (it is currently computed but unused) and re-enabling `sendUpdates`
 - Interactive Slack buttons to confirm or discard low-confidence events
 - Recurring event support (the prompt currently produces a single event per message)

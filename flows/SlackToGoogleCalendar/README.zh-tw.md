@@ -1,7 +1,9 @@
 # Slack to Google Calendar AI Assistant — 實作說明
 
-> **唯一事實來源**：`Slack_to_Google_Calendar_AI_Assistant.json`（工作流程 id `I2dch7ZKvBvX6GVC`）。
-> 若本文件與 JSON 不一致，以 JSON 為準。以下所有節點名稱、版本與參數皆直接讀自該檔案。
+> **參考快照**：`Slack_to_Google_Calendar_AI_Assistant.json`（工作流程 id `I2dch7ZKvBvX6GVC`）。
+> 本文件是對照該匯出檔驗證的，因此兩者不一致時以匯出檔為準。
+> 但就維運而言，正在運行的 n8n 實例才是事實來源——請在實例上修改，再把匯出檔同步回本 repo。
+> 以下所有節點名稱、版本與參數皆直接讀自該檔案。
 
 English version: [README.md](./README.md)
 
@@ -16,7 +18,8 @@ English version: [README.md](./README.md)
 - 通過過濾的訊息，一律會依四種結果之一回覆 Slack：成功、低信心度、無事件、錯誤。
   被過濾掉的訊息則完全不會收到回覆
 
-狀態：**已啟用（active）**。所有面向使用者的文字為正體中文，節點名稱使用英文。
+狀態：**已啟用（active）**。固定的通知文案為正體中文；動態內容——活動標題、原始 Slack 訊息、
+模型分析說明——維持其原本語言。節點名稱使用英文。
 
 ## 🏗️ 系統架構
 
@@ -145,7 +148,9 @@ chain 節點的錯誤輸出。
 
 **類型**：`n8n-nodes-base.code` v2 · `mode: runOnceForAllItems`
 
-整個流程的正規化層。它不會拋出例外；每一條失敗路徑都會回傳帶 `status` 欄位的項目，供下游 IF 節點分流。
+整個流程的正規化層。可預期的失敗——沒有輸入、JSON 無法解析、日期格式錯誤——都會被轉成帶
+`status` 欄位的項目，供下游 IF 節點分流。但它**並非完全不會拋錯**：`aiOutput.hasEvent` 的讀取位於
+所有 `try` 之外，因此模型若回傳可被解析的 JSON `null`，此節點仍會失敗且不會有任何 Slack 回覆。
 
 1. 防護「無輸入資料」與「模型無輸出」→ `status: 'error'`
 2. 在 `JSON.parse` 前剝除程式碼圍籬（` ```json `），因為模型不一定會遵守指示
@@ -153,7 +158,8 @@ chain 節點的錯誤輸出。
 4. `hasEvent` 為 false 或 `events` 為空時回傳 `status: 'no_event'`
 5. 逐一處理事件：
    - 缺少 `title` 或 `startDateTime` 的事件直接跳過（回傳 `null`，之後被濾除）
-   - `isAllDay === true` 或兩個日期都不含 `T` 即視為全天，並以 `^\d{4}-\d{2}-\d{2}$` 驗證
+   - `isAllDay === true` 或兩個日期都不含 `T` 即視為全天；只有正規化後的 `startDateTime`
+     （不含結束日）會以 `^\d{4}-\d{2}-\d{2}$` 驗證
    - 定時活動以 `new Date()` 解析；若 `end <= start`，結束時間改為開始時間 + 1 小時。
      兩者最後透過 `toISOString()` 輸出為 UTC ISO 字串——由工作流程時區換算回台北時間
    - 日期處理失敗時，退回「明天的全天活動」
@@ -161,11 +167,15 @@ chain 節點的錯誤輸出。
    - 描述中組出 `📋 來源信息：` 區塊（原始訊息、發送者、頻道、活動類型、信心度、分析說明）
    - `confidence >= 0.7` 時 `status` 設為 `high_confidence`，否則 `low_confidence`
 6. 若所有事件都被剔除，回傳 `status: 'no_event'`
-7. 最外層 `try/catch` 會把任何未預期的錯誤轉為 `status: 'error'`——此節點永不拋錯
+7. 事件處理外層的 `try/catch` 會把**該區塊內**的未預期錯誤轉為 `status: 'error'`
 
-下游會用到的輸出欄位：`eventIndex`、`title`、`description`、`startDateTime`、`endDateTime`、
+輸出的欄位：`eventIndex`、`title`、`description`、`startDateTime`、`endDateTime`、
 `isAllDay`、`location`、`attendees`、`confidence`、`confidenceDisplay`、`reasoning`、
 `originalMessage`、`slackUser`、`slackChannel`、`slackTimestamp`、`status`。
+
+輸出的欄位並非都會被使用。`attendees` 雖然有計算與過濾，但**從未映射進 `Create Calendar Event`**；
+`eventIndex`、`originalMessage`、`slackUser`、`slackChannel`、`slackTimestamp` 僅作為脈絡攜帶。
+實際被讀取的欄位請見資料契約表。
 
 ### 6. Has Valid Event
 
@@ -210,7 +220,8 @@ additionalFields:
   sendUpdates:  none
 ```
 
-`sendUpdates: none` 表示**不會寄出任何邀請信**，這與提示詞強制 `attendees: []` 的設計一致。
+`sendUpdates: none` 表示**不會寄出任何邀請信**。另請注意 `attendees` 根本不在這組參數中——
+`Parse AI Response` 算出的該欄位從未映射到此處，因此無論模型回傳什麼，建立的事件都不會有與會者。
 全天活動由 `allday` 三元運算式決定——值必須是字串 `'yes'`／`'no'`，不能是布林值。
 
 ### 9. Build Success Blocks
@@ -290,8 +301,8 @@ location、`confidenceDisplay`、`reasoning`）組出提醒訊息，結尾提示
 | 任一錯誤輸出 | Send Error Notification | `error.message` 或 `message` |
 
 `Parse AI Response` 是**唯一**以節點名稱反向引用其他節點的節點
-（`$('Slack Message Trigger')`）——這也是整份 export 中唯一一處這種引用。因此重新命名
-`Slack Message Trigger` 會直接讓該節點失效，而且 n8n 不會提出警告。
+（`$('Slack Message Trigger')`）——這也是整份 export 中唯一一處這種引用。因此該名稱是一項硬相依：
+重新命名觸發器之後，請回頭檢查這個 Code 節點，若字串未被自動改寫就手動更新。
 
 ## 🔀 分流與錯誤處理
 
@@ -300,10 +311,13 @@ location、`confidenceDisplay`、`reasoning`）組出提醒訊息，結尾提示
 
 | 節點 | 可能的失敗原因 |
 |---|---|
-| `Analyze Message with AI` | 模型逾時、額度不足、回應格式錯誤 |
+| `Analyze Message with AI` | 模型或 API 逾時、認證失敗、額度用盡 |
 | `Create Calendar Event` | OAuth 過期、日期區間無效、日曆權限不足 |
 | `Send Success Notification` | Slack 限流、Block Kit 內容無效 |
 | `Send Low Confidence Alert` | 同上 |
+
+模型回應格式錯誤**不會**走這條路線。它會在 `Parse AI Response` 內被攔下、轉為 `status: 'error'`，
+再經由 `Send No Event Reply` 送到 Slack。
 
 `Send No Event Reply` 與 `Azure OpenAI gpt-5.2` 刻意不設錯誤輸出。日後若在主路徑加入可能失敗的節點，
 請一併把它的錯誤輸出接到同一個匯流節點。
@@ -341,7 +355,9 @@ Azure OpenAI 使用 Entra ID（OAuth2），不是 API 金鑰。
 
 ## 🔧 Slack App 設定
 
-本工作流程使用 **Slack Trigger 節點**，訂閱由 n8n 代管，**沒有**需要手動設定的 webhook URL。
+本工作流程使用 **Slack Trigger 節點**，它是以 n8n webhook 形式提供服務（該節點帶有 `webhookId`）。
+請在 n8n 編輯器複製該節點的 production Webhook URL，填入 Slack App 的
+**Event Subscriptions → Request URL**，並訂閱 `message.channels`。
 
 ```yaml
 必要的 Bot Token Scopes：
@@ -367,13 +383,18 @@ Azure OpenAI 使用 Entra ID（OAuth2），不是 API 金鑰。
 | 輸入 | 預期路徑 | 預期結果 |
 |---|---|---|
 | `5/20 去名古屋玩` | 高信心度 | 全天事件，`startDateTime` = `YYYY-05-20`（年份推斷），地點名古屋，含 `📎 查看事件` 按鈕 |
-| `明天下午 2 點團隊會議` | 高信心度 | 定時事件 14:00–15:00（台北時間），成功訊息區塊 |
-| `可能會有個會議` | 低信心度 | 不建立事件，回覆 `⚠️ 發現可能的日程` |
+| `明天下午 2 點團隊會議` | 高信心度 | 定時事件；確切結束時間取決於模型回傳值，`Parse AI Response` 只在 `end <= start` 時才強制改為起始 +1 小時 |
+| `可能會有個會議` | 低信心度**或** `no_event` | 不建立事件；提示詞要求模型在不確定時傾向 `hasEvent: false`，因此兩種回覆都算正確 |
 | `今天天氣真好` | `no_event` | 回覆 `ℹ️ 此訊息未包含可辨識的日程資訊` |
-| 機器人自己發送的訊息 | 被過濾 | 不執行、不回覆 |
-| 討論串回覆 | 被過濾 | 不執行、不回覆 |
+| 機器人自己發送的訊息 | 被過濾 | 會產生執行紀錄但停在 `Filter Valid Messages`，不回覆 |
+| 討論串回覆 | 被過濾 | 會產生執行紀錄但停在 `Filter Valid Messages`，不回覆 |
 
+上表結果取決於模型輸出，請視為「待檢查的預期行為」而非保證。
 年份推斷遵循提示詞規則：月份已過則解析為明年。
+
+⚠️ 提示詞要求模型讓全天事件的起訖日**相同**，而 `Create Calendar Event` 原封不動地送出兩者。
+Google Calendar 的全天 `end` 日期是排除性的（exclusive），因此請以一次實際執行結果確認全天事件
+是否落在預期日期，再信任這條路徑。
 
 ## 🚨 已知行為與注意事項
 
@@ -383,22 +404,25 @@ Azure OpenAI 使用 Entra ID（OAuth2），不是 API 金鑰。
    Google 會回傳 `"start": { "date": "YYYY-MM-DD" }`；若看到 `"start": { "dateTime": ... }`，
    代表旗標未生效。
 3. **信心度是浮點數** —— `Parse AI Response` 執行 `parseFloat(event.confidence) || 0.5`，
-   IF 節點以 `type: number` 比較。若維持字串型別，比較會失效。
+   因此送進 IF 節點的值已是數值。IF 節點同時設定 `typeValidation: loose`，所以請勿依賴自動轉型，
+   保留這個明確的 `parseFloat`。
 4. **Block Kit 必須字串化** —— `blocksUi` 接收的是 `JSON.stringify(blocks)`。
    本 repo 所有 Block Kit 訊息都採用此形式。
-5. **不會寄送邀請** —— `sendUpdates: none` 加上提示詞強制的 `attendees: []`。
+5. **不會寄送邀請** —— `sendUpdates: none`，而且 `attendees` **從未映射進 `Create Calendar Event`**。
    與會者資訊只出現在事件描述中。（`CHANGELOG.md` 1.0.3 宣稱 `sendUpdates: all` 且已設定提醒，
    但 JSON 中兩者皆無。）
-6. **過濾失敗是靜默的** —— `Filter Valid Messages` 拒絕訊息時不會回覆 Slack。
-7. **運算式不支援選擇性串連** —— 請用 `$json.a && $json.a.b`。Code 節點是純 JavaScript，可以用 `?.`。
+6. **過濾失敗是靜默的** —— 執行紀錄會產生，但停在 `Filter Valid Messages`，不會回覆 Slack。
+7. **運算式寫法** —— 本工作流程的運算式一律寫 `$json.a && $json.a.b` 而非 `?.`，請維持一致。
+   Code 節點是純 JavaScript，可自由使用 `?.`。
 
 ## 🔍 疑難排解
 
 | 症狀 | 檢查位置 |
 |---|---|
-| 完全沒有執行紀錄 | Slack 觸發器憑證、機器人是否在頻道內、`Filter Valid Messages` 條件 |
+| 完全沒有執行紀錄 | Slack 觸發器憑證、Slack Event Subscriptions 中登錄的 Request URL、機器人是否在頻道內、工作流程是否已啟用 |
+| 有執行紀錄但立即中止 | `Filter Valid Messages` —— 五個條件之一拒絕了該訊息 |
 | 執行在 AI 節點後中斷 | `Analyze Message with AI` 的錯誤輸出 → 檢視 Slack 錯誤通知 |
-| 出現 `AI 回應解析失敗` | 模型把 JSON 包在敘述或圍籬中——檢查項目中的 `rawResponse` |
+| 出現 `AI 回應解析失敗` | 一般的 ` ```json ` 圍籬會在解析前被剝除，因此代表 JSON 無效或夾雜敘述文字——檢查 `rawResponse`。此訊息是經由 `Send No Event Reply` 送出，不是 AI 節點的錯誤輸出 |
 | 事件時間錯誤 | `Parse AI Response` 的日期分支；確認工作流程時區為 `Asia/Taipei` |
 | 應該成功卻收到低信心度提醒 | 比對項目中的 `confidence` 與兩處門檻設定 |
 | Slack 訊息顯示成原始 JSON | `messageType` 為 `text` 卻傳入區塊，或 `blocksUi` 收到陣列而非字串 |
@@ -422,6 +446,7 @@ Code 節點的 `console.log` 輸出會出現在 n8n 執行紀錄中；現有記�
 ## 🆕 可能的擴充方向（尚未實作）
 
 - 建立事件前先查詢會議室可用性
-- 從 Slack user id 解析真實與會者（需要重新啟用 `sendUpdates`）
+- 從 Slack user id 解析真實與會者——需要把 `attendees` 映射進 `Create Calendar Event`
+  （目前有計算但未使用），並重新啟用 `sendUpdates`
 - 以 Slack 互動式按鈕確認或捨棄低信心度事件
 - 支援週期性事件（目前提示詞每則訊息只產生單一事件）

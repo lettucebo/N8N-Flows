@@ -7,7 +7,7 @@
   - Documented the shared error sink: four nodes route `onError: continueErrorOutput` into `Send Error Notification`.
   - Documented the Slack Block Kit contract (`blocks` must be a `JSON.stringify` string) and the two block builder nodes.
   - Documented the duplicated 0.7 confidence threshold in `Parse AI Response` and `Check Confidence Score`.
-  - Documented workflow settings, credential types, and the Slack Trigger (no manual webhook URL).
+  - Documented workflow settings, credential types, and the Slack Trigger (its production Webhook URL must still be registered in the Slack app's Event Subscriptions).
   - Kept `README.md` and `README.zh-tw.md` section-for-section aligned.
 
 ### Repository tooling
@@ -16,6 +16,7 @@
 
 ### Corrections
 - `sendUpdates` is `none`, not `all` as stated in 1.0.3; no reminders are configured in `additionalFields`. The 1.0.3 entry describes changes that are not present in the exported workflow.
+- `attendees` is computed by `Parse AI Response` but is never mapped into `Create Calendar Event`, so events are always created without guests.
 
 ## [1.0.3] - 2025-06-01
 ### Enhancements
