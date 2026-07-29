@@ -1,893 +1,436 @@
-# n8n Slack Calendar Assistant - Complete Implementation Guide
+# Slack to Google Calendar AI Assistant — Implementation Guide
+
+> **Source of truth**: `Slack_to_Google_Calendar_AI_Assistant.json` (workflow id `I2dch7ZKvBvX6GVC`).
+> If this document and the JSON disagree, the JSON wins. Every node name, version, and parameter
+> below was read from that file.
+
+繁體中文版本：[README.zh-tw.md](./README.zh-tw.md)
 
 ## 📋 System Overview
 
-This is an n8n-based automation workflow that can:
-- Monitor Slack channel messages
-- Use Azure OpenAI to intelligently analyze schedule information in messages
-- Automatically create Google Calendar events
-- Decide whether to create automatically or require confirmation based on confidence levels
-- Support both all-day and timed events
-- Provide detailed Slack notification feedback
+An n8n workflow that turns Slack messages into Google Calendar events:
+
+- Listens to a single Slack channel (`C08NVUQUK8F`)
+- Sends qualifying messages to Azure OpenAI for schedule extraction
+- Parses the model's JSON, normalises dates, and scores confidence
+- Creates the calendar event only when confidence ≥ 0.7
+- Replies in Slack with one of four outcomes for every message that passes the filter: success, low
+  confidence, no event, and error. Messages rejected by the filter get no reply at all.
+
+Status: **active**. All user-facing text is Traditional Chinese (zh-TW); node names are English.
 
 ## 🏗️ System Architecture
 
+14 nodes. `Azure OpenAI gpt-5.2` is an AI sub-node attached to the chain over the
+`ai_languageModel` port, not a step in the main path.
+
+```mermaid
+flowchart TD
+    T[Slack Message Trigger] --> F[Filter Valid Messages]
+    F -- true --> A[Analyze Message with AI]
+    M[Azure OpenAI gpt-5.2] -. ai_languageModel .-> A
+    A -- main --> P[Parse AI Response]
+    A -- error --> ERR[Send Error Notification]
+    P --> HV[Has Valid Event]
+    HV -- true --> CC[Check Confidence Score]
+    HV -- false --> NE[Send No Event Reply]
+    CC -- "confidence >= 0.7" --> CE[Create Calendar Event]
+    CC -- "confidence < 0.7" --> BL[Build Low Confidence Blocks]
+    CE -- main --> BS[Build Success Blocks]
+    CE -- error --> ERR
+    BS --> SS[Send Success Notification]
+    SS -- error --> ERR
+    BL --> SL[Send Low Confidence Alert]
+    SL -- error --> ERR
 ```
-Slack Message → Webhook → Filter Channel Messages → Basic LLM Chain (Azure OpenAI) 
-    ↓
-Process AI Response → Confidence Filter → Event Type Filter
-    ↓                    ↓                    ↓
-Error Notification  High Confidence    Low Confidence
-                         ↓                    ↓
-                   Create Calendar    Confirmation Request
-                         ↓
-                   Success Notification
-```
+
+The `false` branch of `Filter Valid Messages` is intentionally unconnected — messages that fail
+the filter end the execution silently, with no Slack reply.
 
 ## 🔧 Node Configuration Details
 
-### 1. Webhook Node
-**Name**: `Webhook`
-**Type**: Webhook Trigger
+### 1. Slack Message Trigger
 
-**Configuration**:
+**Type**: `n8n-nodes-base.slackTrigger` v1 · **Credential**: `slackApi` — "Slack account"
+
 ```yaml
-HTTP Method: POST
-Path: slack-calendar
-Response Mode: Respond With
-Response Data: ={{$json.challenge || 'OK'}}
+trigger: [message]
+channelId:
+  __rl: true
+  mode: id
+  value: C08NVUQUK8F
+options: {}
 ```
 
-**Purpose**: Receive webhook requests from Slack Event Subscriptions
+Fires on every message in the channel, including the bot's own replies — those are removed by the
+next node, not here.
 
----
+### 2. Filter Valid Messages
 
-### 2. Filter Channel Messages Node
-**Name**: `Filter Channel Messages`
-**Type**: IF
+**Type**: `n8n-nodes-base.if` v2.3 · Combinator: `and` · 5 conditions, all must pass
 
-**Key Configuration**:
-```javascript
-// Condition 1: Check channel
-Value 1: ={{$json.channel}}
-Operation: Equal
-Value 2: C08NVUQUK8F  // Replace with your actual channel ID
+| id | Left | Operation | Right | Purpose |
+|---|---|---|---|---|
+| `cond-channel` | `{{ $json.channel }}` | string contains | `C08NVUQUK8F` | second channel guard |
+| `cond-type` | `{{ $json.type }}` | string equals | `message` | ignore non-message events |
+| `cond-bot` | `{{ $json.bot_id }}` | string empty | — | **breaks the bot feedback loop** |
+| `cond-subtype` | `{{ $json.subtype }}` | string empty | — | ignore joins, edits, deletes |
+| `cond-thread` | `{{ $json.thread_ts }}` | string empty | — | ignore thread replies |
 
-// Condition 2: Check message type
-Value 1: ={{$json.type}}
-Operation: Equal
-Value 2: message
-
-// Condition 3: Exclude Bot messages (prevent infinite loop)
-Value 1: ={{$json.user}}
-Operation: Not Equal
-Value 2: YOUR_BOT_USER_ID  // Replace with your Bot User ID
-
-// Condition 4: Exclude system messages
-Value 1: ={{$json.subtype}}
-Operation: Is Empty
-
-// Condition 5: Exclude reply messages
-Value 1: ={{$json.thread_ts}}
-Operation: Is Empty
-
-// Logic
-Combine: AND
+```yaml
+options:
+  caseSensitive: true
+  typeValidation: loose
+  version: 2
 ```
 
-**Purpose**: Filter to process only user messages from target channel, avoid infinite loops
+`cond-bot` is what stops the workflow re-triggering on its own notifications. Do not remove it.
 
----
+### 3. Analyze Message with AI
 
-### 3. Basic LLM Chain Node
-**Name**: `AI Message Analyzer`
-**Type**: Basic LLM Chain
+**Type**: `@n8n/n8n-nodes-langchain.chainLlm` v1.9 · `onError: continueErrorOutput`
 
-**Language Model Settings**:
-- Model: Azure OpenAI Chat Model
-- Credential: Azure OpenAI API
-- Deployment Name: Your Azure deployment name (e.g., gpt-4)
-
-**Complete Prompt**:
+```yaml
+promptType: define
+text: "={{ $json.text }}"          # the Slack message body
+messages.messageValues[0].message: <system prompt, ~1,860 chars>
 ```
-You are a professional calendar management assistant. Please analyze user's Slack messages and extract possible schedule information.
 
-🔍 Location Detection Rules (Important):
-1. Locations after movement verbs:
-   - "go to XX", "to XX", "towards XX", "attend XX"
-   - "travel to XX", "depart to XX", "fly to XX"
-   - Example: "go to Nagoya for fun" → location: "Nagoya"
+The system prompt (zh-TW) instructs the model to:
 
-2. Locations after position prepositions:
-   - "at XX", "in XX", "located at XX"
-   - "held at XX", "conducted at XX", "convened at XX"
-   - Example: "meeting at Taipei" → location: "Taipei"
+- Produce **one primary event** per analysis, merging related activities into one description
+- Return `hasEvent: false` for greetings, small talk, weather, recommendations — when unsure, prefer `false`
+- Detect locations after movement verbs (去/到/往/赴/前往/出發到/飛往) and positional prepositions (在/於/位於)
+- Classify all-day vs timed events (travel, day trips, business trips, leave, festivals, workshops, multi-location itineraries → all-day)
+- Anchor "now" with `{{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy年MM月dd日 (cccc)', { locale: 'zh-TW' }) }}`
+- Infer the year: past month → next year, current month or later → this year
+- Keep `attendees` an **empty array** so Google Calendar sends no invitations; attendee info goes into the description
+- Score confidence: 0.9+ full detail, 0.7–0.9 clear time and place, 0.5–0.7 partial, <0.5 lacking
 
-3. Common location types:
-   - Cities/Countries: Taipei, Tokyo, Nagoya, Singapore, USA, Japan
-   - Landmarks/Attractions: Taipei 101, Disneyland, National Palace Museum, Mount Fuji
-   - Venues: Conference Room A, cafe, restaurant, office, home
-   - Online: Zoom, Teams, Google Meet, video call, online
-   - Buildings: XX Building, XX Center, XX Hall, XX Auditorium
+Required output shape:
 
-4. Compound location expressions:
-   - "Taipei 101" → location: "Taipei 101"
-   - "Hsinchu Science Park" → location: "Hsinchu Science Park"
-   - "Conference Room A" → location: "Conference Room A"
-   - "online meeting" → location: "online"
-
-5. Location extraction priority:
-   - Specific address > Building name > City name > Area name
-   - If multiple locations, choose the most specific one
-
-6. Special case handling:
-   - "XX for fun", "XX travel", "XX business trip" → XX is location
-   - "return to XX", "back to XX" → XX is location
-   - "meet at XX", "dine at XX" → XX might be location
-
-All-day event identification rules:
-1. Travel activities: "go to XX for fun", "XX travel", "to XX", "XX business trip"
-2. Holidays/Leave: "take leave", "vacation", "holiday"
-3. Festivals/Celebrations: "birthday", "festival", "event day"
-4. Workshops/Courses: "workshop", "training camp", "boot camp"
-5. Activities with only date mentioned without specific time
-
-Timed event identification rules:
-1. Meetings: "meeting", "conference", "discussion"
-2. Presentations: "presentation", "report"
-3. Activities with specific time: "2 PM", "morning", "evening"
-
-Time format rules:
-- All-day events: startDateTime set to "YYYY-MM-DD" (no time component)
-- Timed events: Use full ISO 8601 format "YYYY-MM-DDTHH:mm:ss+08:00"
-
-Analysis rules:
-1. Time keywords: tomorrow, next week, today, specific dates, specific times
-2. Activity keywords: meeting, discussion, presentation, training, workshop, activity, fun, travel
-3. Location information: conference room, address, online, video call, city names, building names
-4. Participants: @username, titles, departments
-5. Time inference:
-   - "tomorrow afternoon" → tomorrow 14:00-15:00 (timed)
-   - "next Wednesday meeting" → next Wednesday 09:00-10:00 (timed)
-   - "2 o'clock meeting" → 14:00-15:00 (timed)
-   - "go to XX for fun" → all-day event (pure date format)
-   - "XX workshop" → all-day event (pure date format)
-   - "take leave" → all-day event (pure date format)
-
-Please reply in the following JSON format, do not add any other text:
+```json
 {
   "hasEvent": true,
   "events": [
     {
-      "title": "Event Title",
-      "description": "Detailed description",
-      "startDateTime": "2025-05-20",
-      "endDateTime": "2025-05-20",
+      "title": "活動標題",
+      "description": "詳細描述",
+      "startDateTime": "YYYY-MM-DD 或 YYYY-MM-DDTHH:mm:ss+08:00",
+      "endDateTime": "同上",
       "isAllDay": true,
-      "location": "Specific location name",
-      "attendees": ["email1@example.com"],
+      "location": "地點",
+      "attendees": [],
       "confidence": 0.95
     }
   ],
-  "reasoning": "Analysis reason, including location identification logic"
+  "reasoning": "分析原因"
 }
-
-Location detection examples:
-- "5/20 go to Nagoya for fun" → location: "Nagoya" (extracted from "go to XX for fun")
-- "meeting at Conference Room A tomorrow" → location: "Conference Room A" (extracted from "at XX")
-- "business trip to Taipei next week" → location: "Taipei" (extracted from "to XX business trip")
-- "6/15 Tokyo Disneyland day trip" → location: "Tokyo Disneyland" (compound location)
-- "online meeting to discuss project" → location: "online" (virtual location)
-- "work from home" → location: "home" (home location)
-- "visit Hsinchu Science Park" → location: "Hsinchu Science Park" (park location)
-
-Activity type and location examples:
-- "5/20 go to Nagoya for fun" → all-day event, startDateTime: "2025-05-20", endDateTime: "2025-05-20", isAllDay: true, location: "Nagoya"
-- "presentation at Conference Room B tomorrow 2 PM" → timed event, startDateTime: "2025-05-21T14:00:00+08:00", endDateTime: "2025-05-21T15:00:00+08:00", isAllDay: false, location: "Conference Room B"
-- "6/15 Taipei 101 workshop" → all-day event, startDateTime: "2025-06-15", endDateTime: "2025-06-15", isAllDay: true, location: "Taipei 101"
-- "online meeting next Wednesday 10 AM" → timed event, startDateTime: "2025-06-04T10:00:00+08:00", endDateTime: "2025-06-04T11:00:00+08:00", isAllDay: false, location: "online"
-
-Confidence assessment:
-- 0.9+: Complete time + location + activity type clear
-- 0.7-0.9: Clear time and activity, location can be inferred
-- 0.5-0.7: Vague time or activity type, location unclear
-- <0.5: Lack of key information
-
-Default settings:
-- Time zone: Asia/Taipei (+08:00)
-- Default timed event duration: 1 hour
-- Meeting without specific time: 09:00-10:00
-- Travel/vacation/workshop etc.: all-day events
-- Location extraction: Prioritize extracting the most specific location information
-
-Now please analyze the following Slack message: "={{$json.text}}"
-
-⚠️ Important: Please pay special attention to location information extraction, ensuring no location-related words are missed.
 ```
 
-**Purpose**: Use Azure OpenAI to analyze Slack messages and extract schedule information
+When there is no event: `{ "hasEvent": false, "events": [], "reasoning": "..." }`.
 
----
+### 4. Azure OpenAI gpt-5.2
 
-### 4. Process AI Response Node
-**Name**: `Process AI Response`
-**Type**: Function
+**Type**: `@n8n/n8n-nodes-langchain.lmChatAzureOpenAi` v1 · **Credential**:
+`azureEntraCognitiveServicesOAuth2Api` — "Azure Open AI account Entra ID"
 
-**Complete JavaScript Code**:
+```yaml
+authentication: azureEntraCognitiveServicesOAuth2Api
+model: gpt-5.2
+options: {}
+```
+
+Connected to node 3 through the `ai_languageModel` port. It has no `main` connections and no error
+output — a model failure surfaces on the chain node's error output.
+
+### 5. Parse AI Response
+
+**Type**: `n8n-nodes-base.code` v2 · `mode: runOnceForAllItems`
+
+The workflow's normalisation layer. It never throws; every failure path returns an item with a
+`status` field so downstream IF nodes can route it.
+
+1. Guards missing input and missing model output → `status: 'error'`
+2. Strips code fences (` ```json `) before `JSON.parse`, because the model does not always comply
+3. Reads the original Slack payload via `$('Slack Message Trigger').first().json`, with a fallback
+4. Returns `status: 'no_event'` when `hasEvent` is false or `events` is empty
+5. Per event:
+   - Skips events missing `title` or `startDateTime` (returns `null`, filtered out afterwards)
+   - All-day when `isAllDay === true` or neither date contains `T`; validated against `^\d{4}-\d{2}-\d{2}$`
+   - Timed events are parsed with `new Date()`; if `end <= start`, end is pushed to start + 1 hour.
+     Both are emitted as UTC ISO strings via `toISOString()` — the workflow timezone converts them back
+   - On any date failure, falls back to tomorrow as an all-day event
+   - Filters `attendees` to values containing `@` and `.`
+   - Builds the description with a `📋 來源信息：` block (original message, sender, channel, event type, confidence, reasoning)
+   - Sets `status` to `high_confidence` when `confidence >= 0.7`, otherwise `low_confidence`
+6. Returns `status: 'no_event'` if every event was rejected
+7. A surrounding `try/catch` turns any unexpected failure into `status: 'error'` — the node never throws
+
+Output fields consumed downstream: `eventIndex`, `title`, `description`, `startDateTime`,
+`endDateTime`, `isAllDay`, `location`, `attendees`, `confidence`, `confidenceDisplay`, `reasoning`,
+`originalMessage`, `slackUser`, `slackChannel`, `slackTimestamp`, `status`.
+
+### 6. Has Valid Event
+
+**Type**: `n8n-nodes-base.if` v2.3 · Combinator: `and`
+
+| Left | Operation | Right |
+|---|---|---|
+| `{{ $json.status }}` | string notEquals | `no_event` |
+| `{{ $json.status }}` | string notEquals | `error` |
+
+`false` → `Send No Event Reply`, which handles **both** the `no_event` and `error` cases.
+
+### 7. Check Confidence Score
+
+**Type**: `n8n-nodes-base.if` v2.3 · `alwaysOutputData: false`
+
+```yaml
+leftValue: "={{ $json.confidence }}"
+operator: { type: number, operation: gte }
+rightValue: 0.7
+```
+
+⚠️ **The 0.7 threshold exists in two places** — here, and in the ternary that sets `status` in
+`Parse AI Response`. Change both together or the reported status and the actual routing disagree.
+
+### 8. Create Calendar Event
+
+**Type**: `n8n-nodes-base.googleCalendar` v1.3 · `onError: continueErrorOutput` ·
+**Credential**: `googleCalendarOAuth2Api` — "Google Calendar account"
+
+```yaml
+operation: create
+calendar: { __rl: true, mode: list, value: abc12207@gmail.com }
+start: "={{$json.startDateTime}}"
+end:   "={{$json.endDateTime}}"
+additionalFields:
+  summary:      "={{$json.title}}"
+  description:  "={{$json.description}}"
+  location:     "={{$json.location}}"
+  allday:       "={{ $json.isAllDay ? 'yes' : 'no' }}"
+  maxAttendees: 50
+  sendUpdates:  none
+```
+
+`sendUpdates: none` means **no invitation emails are sent**, which is consistent with the prompt
+forcing `attendees: []`. All-day events are driven by the `allday` ternary — the value must be the
+string `'yes'`/`'no'`, not a boolean.
+
+### 9. Build Success Blocks
+
+**Type**: `n8n-nodes-base.code` v2 — reads the Google Calendar API response.
+
+- `data.start.date` → all-day, formatted `MM月dd日 (cccc)`
+- `data.start.dateTime` → timed, both ends converted with `DateTime.fromISO(...).setZone('Asia/Taipei')`, formatted `MM月dd日 (cccc) HH:mm - HH:mm`
+- Description preview is the text before the `📋 來源信息：` marker
+- Emits header / section / fields / divider / actions (a `📎 查看事件` button linking `data.htmlLink`) / context blocks
+
+Returns `{ blocks: JSON.stringify(blocks), fallbackText }` — the blocks must be a **string**.
+
+### 10. Send Success Notification
+
+**Type**: `n8n-nodes-base.slack` v2.4 · `onError: continueErrorOutput`
+
+```yaml
+resource: message
+operation: post
+select: channel
+channelId: { __rl: true, mode: id, value: C08NVUQUK8F }
+messageType: block
+blocksUi: "={{ $json.blocks }}"
+text:     "={{ $json.fallbackText }}"
+```
+
+### 11. Build Low Confidence Blocks
+
+**Type**: `n8n-nodes-base.code` v2 — builds an advisory message from `Parse AI Response` output
+(title, `startDateTime` as-is, location, `confidenceDisplay`, `reasoning`) and closes with a hint to
+resend with explicit time and place. Same `{ blocks: JSON.stringify(...), fallbackText }` contract.
+
+No calendar event is created on this path.
+
+### 12. Send Low Confidence Alert
+
+**Type**: `n8n-nodes-base.slack` v2.4 · `onError: continueErrorOutput` — identical configuration to
+node 10.
+
+### 13. Send No Event Reply
+
+**Type**: `n8n-nodes-base.slack` v2.4 · `messageType: text`
+
+A single expression covers both cases it receives:
+
 ```javascript
-// ===============================================
-// Process AI Response - Complete JavaScript Code
-// ===============================================
-
-console.log('🚀 Starting AI response processing...');
-
-// 1. Check basic input
-const inputData = $input.first();
-if (!inputData || !inputData.json) {
-  console.log('❌ No input data, stopping execution');
-  return [];
-}
-
-console.log('📥 Input data:', JSON.stringify(inputData.json, null, 2));
-
-// 2. Get AI output (from text field)
-const aiResponseText = inputData.json.text || inputData.json.output;
-if (!aiResponseText) {
-  console.log('❌ AI has no text output, stopping execution');
-  return [];
-}
-
-console.log('🤖 AI raw response:', aiResponseText);
-
-// 3. Parse JSON string
-let aiOutput;
-try {
-  // Clean possible markdown format
-  const cleanResponse = aiResponseText.replace(/```json\n?|```\n?/g, '').trim();
-  aiOutput = JSON.parse(cleanResponse);
-  console.log('✅ Parsed AI output:', JSON.stringify(aiOutput, null, 2));
-} catch (error) {
-  console.log('❌ JSON parsing failed:', error.message);
-  return [{
-    json: {
-      status: 'error',
-      error: `AI response parsing failed: ${error.message}`,
-      rawResponse: aiResponseText,
-      slackUser: 'unknown',
-      slackChannel: 'unknown',
-      slackTimestamp: Date.now().toString()
-    }
-  }];
-}
-
-// 4. Check Slack original data
-let slackData = {};
-try {
-  // Try multiple ways to get Slack data
-  if ($node && $node[0] && $node[0].json) {
-    slackData = $node[0].json;
-  } else if ($('Webhook') && $('Webhook').first()) {
-    slackData = $('Webhook').first().json;
-  } else if ($('Slack Webhook') && $('Slack Webhook').first()) {
-    slackData = $('Slack Webhook').first().json;
-  } else {
-    // If cannot get original data, use defaults
-    slackData = {
-      text: 'Unable to get original message',
-      user: 'unknown',
-      channel: 'unknown',
-      ts: Date.now().toString()
-    };
-  }
-  console.log('📱 Slack data:', JSON.stringify(slackData, null, 2));
-} catch (error) {
-  console.log('⚠️ Error getting Slack data:', error.message);
-  slackData = {
-    text: 'Unable to get original message',
-    user: 'unknown', 
-    channel: 'unknown',
-    ts: Date.now().toString()
-  };
-}
-
-// 5. Check if AI found events
-if (!aiOutput.hasEvent || !aiOutput.events || aiOutput.events.length === 0) {
-  console.log('ℹ️ AI found no events');
-  return [{
-    json: {
-      status: 'no_event',
-      message: 'No valid schedule information found',
-      originalMessage: slackData.text,
-      slackUser: slackData.user,
-      slackChannel: slackData.channel,
-      slackTimestamp: slackData.ts,
-      reasoning: aiOutput.reasoning || 'Unable to identify schedule-related content'
-    }
-  }];
-}
-
-// 6. Process found events (support all-day activities)
-console.log(`📅 Found ${aiOutput.events.length} events, starting processing`);
-
-try {
-  const processedEvents = aiOutput.events.map((event, index) => {
-    console.log(`🔄 Processing event ${index}:`, JSON.stringify(event, null, 2));
-    
-    // Validate if event has required fields
-    if (!event.title && !event.startDateTime) {
-      console.log(`⚠️ Event ${index} missing required fields, skipping`);
-      return null;
-    }
-
-    // 🎯 Handle all-day and timed events
-    let startDateTime, endDateTime, isAllDay = false;
-    let calendarStartDateTime, calendarEndDateTime;
-    
-    try {
-      // Check if it's an all-day event
-      const isAllDayEvent = event.isAllDay === true || 
-                           (!event.startDateTime.includes('T') && !event.endDateTime.includes('T'));
-      
-      if (isAllDayEvent) {
-        // 📅 All-day event processing
-        console.log(`📅 Event ${index} is all-day event`);
-        isAllDay = true;
-        
-        // Ensure correct date format (YYYY-MM-DD)
-        startDateTime = event.startDateTime.includes('T') 
-          ? event.startDateTime.split('T')[0] 
-          : event.startDateTime;
-        endDateTime = event.endDateTime.includes('T') 
-          ? event.endDateTime.split('T')[0] 
-          : event.endDateTime;
-          
-        // Google Calendar all-day event format: pure date string
-        calendarStartDateTime = startDateTime;
-        calendarEndDateTime = endDateTime;
-        
-        // Validate date format
-        if (!startDateTime.match(/^\d{4}-\d{2}-\d{2}$/)) {
-          throw new Error('All-day event date format error');
-        }
-        
-        console.log(`✅ All-day event time: ${startDateTime} to ${endDateTime}`);
-        
-      } else {
-        // ⏰ Timed event processing
-        console.log(`⏰ Event ${index} is timed event`);
-        isAllDay = false;
-        
-        const startDate = new Date(event.startDateTime);
-        const endDate = new Date(event.endDateTime);
-        
-        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-          throw new Error('Invalid date time format');
-        }
-        
-        // Ensure end time is after start time
-        if (endDate <= startDate) {
-          endDate.setTime(startDate.getTime() + 60 * 60 * 1000);
-        }
-        
-        startDateTime = startDate.toISOString();
-        endDateTime = endDate.toISOString();
-        
-        // Google Calendar timed event format: complete ISO string
-        calendarStartDateTime = startDateTime;
-        calendarEndDateTime = endDateTime;
-        
-        console.log(`✅ Timed event: ${startDateTime} to ${endDateTime}`);
-      }
-      
-    } catch (dateError) {
-      console.log(`⚠️ Event ${index} time processing failed, using default:`, dateError.message);
-      
-      // Default to tomorrow's all-day event
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const dateStr = tomorrow.toISOString().split('T')[0];
-      
-      startDateTime = dateStr;
-      endDateTime = dateStr;
-      calendarStartDateTime = dateStr;
-      calendarEndDateTime = dateStr;
-      isAllDay = true;
-    }
-    
-    // Process attendees list
-    const attendees = (event.attendees || []).filter(email => 
-      email && email.includes('@') && email.includes('.')
-    );
-    
-    // Ensure confidence is float
-    const confidence = parseFloat(event.confidence) || 0.5;
-    console.log(`📊 Event ${index} confidence: ${confidence} (${Math.round(confidence * 100)}%)`);
-    
-    // Build detailed description
-    const description = [
-      event.description || '',
-      '',
-      '📋 Source Information:',
-      `• Slack Message: ${slackData.text}`,
-      `• Sender: <@${slackData.user}>`,
-      `• Channel: <#${slackData.channel}>`,
-      `• Event Type: ${isAllDay ? '📅 All-day Event' : '⏰ Timed Event'}`,
-      `• AI Analysis Confidence: ${Math.round(confidence * 100)}%`,
-      aiOutput.reasoning ? `• Analysis Explanation: ${aiOutput.reasoning}` : ''
-    ].filter(line => line !== '').join('\n');
-    
-    // 🎯 Determine processing strategy based on confidence
-    let eventStatus;
-    if (confidence >= 0.7) {
-      eventStatus = 'high_confidence';
-      console.log(`✅ Event ${index} high confidence, auto processing`);
-    } else {
-      eventStatus = 'low_confidence';
-      console.log(`⚠️ Event ${index} low confidence, needs confirmation`);
-    }
-    
-    const processedEvent = {
-      json: {
-        eventIndex: index,
-        title: event.title || 'Untitled Event',
-        description: description,
-        
-        // 📅 Time information
-        startDateTime: calendarStartDateTime,
-        endDateTime: calendarEndDateTime,
-        isAllDay: isAllDay,
-        
-        // 📍 Location and attendees
-        location: event.location || '',
-        attendees: attendees,
-        
-        // 📊 Analysis information
-        confidence: confidence,
-        reasoning: aiOutput.reasoning || '',
-        
-        // 📱 Original information
-        originalMessage: slackData.text,
-        slackUser: slackData.user,
-        slackChannel: slackData.channel,
-        slackTimestamp: slackData.ts,
-        
-        // 🔄 Processing status
-        status: eventStatus
-      }
-    };
-    
-    console.log(`✅ Event ${index} processing complete:`, JSON.stringify(processedEvent.json, null, 2));
-    return processedEvent;
-  }).filter(event => event !== null);
-
-  // 7. Check if there are valid processing results
-  if (processedEvents.length === 0) {
-    console.log('❌ No valid events to process');
-    return [{
-      json: {
-        status: 'error',
-        error: 'All events failed processing',
-        originalMessage: slackData.text,
-        slackUser: slackData.user,
-        slackChannel: slackData.channel,
-        slackTimestamp: slackData.ts
-      }
-    }];
-  }
-
-  console.log(`🎉 Successfully processed ${processedEvents.length} events`);
-  console.log('📤 Final output:', JSON.stringify(processedEvents, null, 2));
-  
-  return processedEvents;
-  
-} catch (error) {
-  console.log('❌ Error processing events:', error.message);
-  console.log('🔍 Error stack:', error.stack);
-  
-  return [{
-    json: {
-      status: 'error',
-      error: `Processing failed: ${error.message}`,
-      originalMessage: slackData.text,
-      slackUser: slackData.user,
-      slackChannel: slackData.channel,
-      slackTimestamp: slackData.ts,
-      debugInfo: {
-        errorStack: error.stack,
-        inputData: inputData.json,
-        aiOutput: aiOutput
-      }
-    }
-  }];
-}
+{{ $json.status === 'error'
+   ? '❌ 處理訊息時發生錯誤 …' + ($json.error || '未知錯誤') + '…'
+   : 'ℹ️ 此訊息未包含可辨識的日程資訊，未建立日曆事件。…' + ($json.reasoning || '無') + '…' }}
 ```
 
-**Purpose**: Parse AI output, handle time formats, classify events based on confidence
+### 14. Send Error Notification
 
----
+**Type**: `n8n-nodes-base.slack` v2.4 · `messageType: text` — the shared error sink.
 
-### 5. Confidence Filter Node
-**Name**: `Confidence Filter`
-**Type**: IF
-
-**Configuration**:
 ```javascript
-// Use single condition (recommended)
-Value 1: ={{$json.status === 'high_confidence'}}
-Operation: Equal
-Value 2: true
-
-// Or use separate conditions
-// Condition 1: Status check
-Value 1: ={{$json.status}}
-Operation: Equal
-Value 2: high_confidence
-
-// Condition 2: Confidence check
-Value 1: ={{parseFloat($json.confidence)}}
-Operation: Greater than or equal
-Value 2: 0.7
-
-// Logic: AND
+{{ $json.error && $json.error.message ? $json.error.message : ($json.message || '未知錯誤') }}
 ```
 
-**Purpose**: Decide whether to auto-create or require confirmation based on confidence (≥70%)
+Note the `&&` guard instead of `?.`: this is an n8n expression, not Code node JavaScript.
 
----
+## 🔗 Data Contract Between Nodes
 
-### 6. Create Calendar Event Node
-**Name**: `Create Calendar Event`
-**Type**: Google Calendar
+| Producer | Consumer | Fields the consumer relies on |
+|---|---|---|
+| Slack Message Trigger | Filter Valid Messages | `channel`, `type`, `bot_id`, `subtype`, `thread_ts` |
+| Slack Message Trigger | Parse AI Response (backwards reference) | `text`, `user`, `channel`, `ts` |
+| Analyze Message with AI | Parse AI Response | `text` or `output` — the raw model string |
+| Parse AI Response | Has Valid Event | `status` |
+| Parse AI Response | Check Confidence Score | `confidence` (number) |
+| Parse AI Response | Create Calendar Event | `startDateTime`, `endDateTime`, `isAllDay`, `title`, `description`, `location` |
+| Parse AI Response | Build Low Confidence Blocks | `title`, `startDateTime`, `location`, `confidenceDisplay`, `reasoning` |
+| Parse AI Response | Send No Event Reply | `status`, `error`, `reasoning` |
+| Create Calendar Event | Build Success Blocks | `summary`, `start`, `end`, `location`, `description`, `htmlLink`, `id` |
+| Build Success Blocks · Build Low Confidence Blocks | their Slack senders | `blocks` (stringified JSON), `fallbackText` |
+| any error output | Send Error Notification | `error.message` or `message` |
 
-**Configuration**:
-```javascript
-Calendar ID: primary
-Resource: Event
-Operation: Create
+`Parse AI Response` is the **only** node that reaches backwards by node name
+(`$('Slack Message Trigger')`) — it is the single such reference in the whole export. Renaming
+`Slack Message Trigger` therefore breaks that node, and n8n will not warn you.
 
-// Basic fields
-Summary: ={{$json.title}}
-Start: ={{$json.startDateTime}}
-End: ={{$json.endDateTime}}
-Description: ={{$json.description}}
-Location: ={{$json.location}}
+## 🔀 Routing and Error Handling
 
-// 🎯 Key setting: All Day Event
-// Option 1: Use fixed value (most stable)
-All Day Event: Yes  // Manual selection (if all are all-day events)
+Four nodes set `onError: "continueErrorOutput"` and route their **second** `main` output (index 1)
+into `Send Error Notification`:
 
-// Option 2: Use expression (needs dynamic handling)
-All Day Event: ={{Boolean($json.isAllDay)}}
+| Node | Why it can fail |
+|---|---|
+| `Analyze Message with AI` | model timeout, quota, malformed response |
+| `Create Calendar Event` | OAuth expiry, invalid date range, calendar permissions |
+| `Send Success Notification` | Slack rate limit, invalid Block Kit payload |
+| `Send Low Confidence Alert` | same as above |
 
-// Other settings
-Send Notifications: Yes
-Time Zone: Asia/Taipei
+`Send No Event Reply` and `Azure OpenAI gpt-5.2` deliberately have no error output. When adding a
+fallible node to the main path, wire its error output to the same sink.
+
+## ⚙️ Workflow Settings
+
+```yaml
+executionOrder: v1
+timezone: Asia/Taipei
+executionTimeout: 3600
+saveExecutionProgress: true
+saveManualExecutions: true
+saveDataErrorExecution: all
+saveDataSuccessExecution: all
+binaryMode: separate
+callerPolicy: workflowsFromSameOwner
+availableInMCP: false
 ```
 
-**Known Issues**: All Day Event field expressions may be unstable, recommend using branch handling
-
-**Branch Solution**:
-If All Day Event expression has issues, create two dedicated nodes:
-1. `Create All Day Event` - All Day: Yes (fixed)
-2. `Create Timed Event` - All Day: No (fixed)
-Use Event Type Filter before to route
-
-**Purpose**: Create Google Calendar events
-
----
-
-### 7. Success Notification Node
-**Name**: `Success Notification`
-**Type**: Slack
-
-**Configuration**:
-```javascript
-Credential: Slack API
-Resource: Message
-Operation: Post
-
-// Channel setting
-Select a Channel: By ID
-Channel ID: ={{$json.slackChannel || 'C08NVUQUK8F'}}
-
-// Message content
-Text: 
-✅ **Calendar event successfully created!**
-
-📅 **{{$json.summary}}**
-{{$json.start.date ? 
-  '🗓️ ' + $json.start.date + ' (All-day event)' : 
-  '🕐 Time: ' + $json.start.dateTime + ' - ' + $json.end.dateTime
-}}
-📍 Location: {{$json.location || 'Not specified'}}
-
-🔗 [View Event]({{$json.htmlLink}})
-
-_🤖 Automatically created by AI assistant_
-
-// Thread reply setting
-Thread TS: ={{$json.slackTimestamp}}
-```
-
-**Purpose**: Send successful event creation Slack notification
-
----
-
-### 8. Low Confidence Notification Node
-**Name**: `Low Confidence Notification`
-**Type**: Slack
-
-**Configuration**:
-```javascript
-Channel ID: ={{$json.slackChannel}}
-
-Text:
-⚠️ **Schedule information needs confirmation**
-
-I found possible schedule information in your message, but it needs confirmation:
-
-📝 **{{$json.title}}**
-🕐 Time: {{DateTime.fromISO($json.startDateTime).toFormat('MM/dd HH:mm')}} - {{DateTime.fromISO($json.endDateTime).toFormat('HH:mm')}}
-📍 Location: {{$json.location || 'Not specified'}}
-📊 Confidence: {{Math.round($json.confidence * 100)}}%
-
-💭 AI Analysis: _{{$json.reasoning}}_
-
-Please reply with the following options:
-✅ Confirm creation
-❌ Cancel
-✏️ Provide more details
-
-Thread TS: ={{$json.slackTimestamp}}
-```
-
-**Purpose**: Low confidence events require user confirmation
-
----
-
-### 9. Error Notification Node
-**Name**: `Error Notification`
-**Type**: Slack
-
-**Configuration**:
-```javascript
-Channel ID: ={{$json.slackChannel}}
-
-Text:
-❌ **Processing failed**
-
-{{$json.status === 'no_event' ? 'No clear schedule information found in your message.' : 'Error occurred while processing your message:'}}
-
-{{$json.status === 'error' ? '🐛 Error details: ' + $json.error : ''}}
-{{$json.reasoning ? '🤔 AI Analysis: ' + $json.reasoning : ''}}
-
-💡 **Suggested format examples:**
-• `Team meeting tomorrow 2 PM`
-• `Client presentation 2025-06-01 14:00`
-• `Project discussion next Wednesday 10 AM at Conference Room A`
-• `All-day workshop 6/15`
-
-Original message: _{{$json.originalMessage}}_
-
-Thread TS: ={{$json.slackTimestamp}}
-```
-
-**Purpose**: Handle error and no-event situations notification
+This is the only workflow in the repository carrying a full settings block; copy it when creating a
+new workflow rather than retyping it.
 
 ## 🔐 Credential Configuration
 
-### 1. Slack API Credential
-**Type**: Slack API
-**Settings**:
-```yaml
-Access Token: xoxb-your-bot-token-here
-```
+| Credential type | Name in n8n | Used by |
+|---|---|---|
+| `slackApi` | Slack account | trigger + all 4 Slack senders |
+| `azureEntraCognitiveServicesOAuth2Api` | Azure Open AI account Entra ID | Azure OpenAI gpt-5.2 |
+| `googleCalendarOAuth2Api` | Google Calendar account | Create Calendar Event |
 
-**How to obtain**:
-1. Go to https://api.slack.com/apps
-2. Create new App or select existing App
-3. OAuth & Permissions → Bot User OAuth Token
+The workflow JSON stores only `{ id, name }` references — secrets live in n8n and must never be
+committed. Azure OpenAI uses Entra ID (OAuth2), not an API key.
 
-### 2. Azure OpenAI Credential
-**Type**: Azure OpenAI
-**Settings**:
-```yaml
-API Key: your-azure-openai-api-key
-Resource Name: your-resource-name
-API Version: 2024-02-15-preview
-```
-
-### 3. Google Calendar Credential
-**Type**: Google Calendar OAuth2 API
-**Settings**: Follow n8n instructions to complete OAuth2 authorization flow
+**Slack token**: https://api.slack.com/apps → your app → OAuth & Permissions → Bot User OAuth Token.
+**Google Calendar**: complete the OAuth2 flow in n8n's credential editor.
 
 ## 🔧 Slack App Configuration
 
-### Event Subscriptions Settings
-```yaml
-Request URL: https://your-n8n-domain.com/webhook-test/slack-calendar
-Subscribe to bot events:
-  - message.channels
-  - app_mention
-```
+This workflow uses the **Slack Trigger node**, which subscribes through n8n — there is no manually
+configured webhook URL.
 
-### Bot Token Scopes
 ```yaml
-Required permissions:
+Bot Token Scopes (required):
   - channels:read
   - channels:history
   - chat:write
   - users:read
-  - app_mentions:read
 
-Optional permissions:
+Optional:
   - chat:write.public
   - reactions:read
 ```
 
-## 🚨 Known Issues and Solutions
+> The scopes above are operational Slack app setup. They are **not** stored in the workflow export,
+> so they cannot be verified against the JSON — treat them as a deployment checklist.
 
-### 1. Infinite Loop Issue
-**Problem**: Bot-sent notifications trigger new workflows
-**Solution**: Add Bot filtering in Filter Channel Messages
-```javascript
-Value 1: ={{$json.user}}
-Operation: Not Equal
-Value 2: YOUR_BOT_USER_ID
-```
-
-### 2. All Day Event Expression Issue
-**Problem**: `={{$json.isAllDay ? 'Yes' : 'No'}}` not accepted
-**Solution**: Use branch handling or fixed values
-```javascript
-// Solution 1: Branch handling
-Event Type Filter → true → Create All Day Event (All Day: Yes)
-                  → false → Create Timed Event (All Day: No)
-
-// Solution 2: Try different expressions
-={{Boolean($json.isAllDay)}}
-={{$json.isAllDay === true}}
-```
-
-### 3. Confidence Judgment Issue
-**Problem**: Float comparison failure
-**Solution**: Use `parseFloat()` to ensure numeric type
-```javascript
-={{parseFloat($json.confidence) >= 0.7}}
-```
-
-### 4. All-day Event Time Format Issue
-**Problem**: Google Calendar shows 08:00-08:00 instead of all-day
-**Verification**: Check Google Calendar output format
-```json
-// ✅ Correct all-day event format
-"start": {"date": "2025-05-20"}
-"end": {"date": "2025-05-20"}
-
-// ❌ Incorrect format
-"start": {"dateTime": "2025-05-20T08:00:00+08:00"}
-```
+The bot must be a member of `C08NVUQUK8F` to receive messages and post replies.
 
 ## 🧪 Test Cases
 
-### All-day Event Test
-```
-Input: "5/20 go to Nagoya for fun"
-Expected output:
-- title: "Go to Nagoya for fun"
-- startDateTime: "2025-05-20"
-- endDateTime: "2025-05-20" 
-- isAllDay: true
-- location: "Nagoya"
-- confidence: 0.9+
-```
+Post these in the monitored channel and check the execution log.
 
-### Timed Event Test
-```
-Input: "Team meeting tomorrow 2 PM"
-Expected output:
-- title: "Team meeting"
-- startDateTime: "2025-05-XX T14:00:00+08:00"
-- endDateTime: "2025-05-XX T15:00:00+08:00"
-- isAllDay: false
-- confidence: 0.8+
-```
+| Input (zh-TW) | Expected path | Expected result |
+|---|---|---|
+| `5/20 去名古屋玩` | high confidence | all-day event, `startDateTime` = `YYYY-05-20` (year inferred), location 名古屋, `📎 查看事件` button |
+| `明天下午 2 點團隊會議` | high confidence | timed event 14:00–15:00 Taipei time, success blocks |
+| `可能會有個會議` | low confidence | no calendar event, `⚠️ 發現可能的日程` alert |
+| `今天天氣真好` | `no_event` | `ℹ️ 此訊息未包含可辨識的日程資訊` reply |
+| any message from the bot itself | filtered out | no execution, no reply |
+| a thread reply | filtered out | no execution, no reply |
 
-### Low Confidence Test
-```
-Input: "Might have a meeting"
-Expected result: Trigger Low Confidence Notification
-```
+Year inference follows the prompt rule: a month already past resolves to next year.
 
-### No Event Test
-```
-Input: "Weather is nice today"
-Expected result: Trigger Error Notification (no_event)
-```
+## 🚨 Known Behaviours and Gotchas
+
+1. **Bot feedback loop** — prevented by `cond-bot` (`bot_id` empty) in `Filter Valid Messages`.
+   Removing it makes every notification retrigger the workflow.
+2. **All-day flag** — `additionalFields.allday` must receive `'yes'`/`'no'` strings. A correct
+   all-day event comes back from Google as `"start": { "date": "YYYY-MM-DD" }`; if you see
+   `"start": { "dateTime": ... }` the flag did not take effect.
+3. **Confidence is a float** — `Parse AI Response` runs `parseFloat(event.confidence) || 0.5`, and
+   the IF node compares with `type: number`. Leaving it as a string breaks the comparison.
+4. **Block Kit must be stringified** — `blocksUi` receives `JSON.stringify(blocks)`. Every Block Kit
+   message in this repository uses that form.
+5. **No invitations are sent** — `sendUpdates: none` plus `attendees: []` from the prompt. Attendee
+   information appears only in the event description. (`CHANGELOG.md` 1.0.3 claims `sendUpdates: all`
+   and configured reminders; the JSON has neither.)
+6. **Filter failures are silent** — no Slack reply when `Filter Valid Messages` rejects a message.
+7. **Expressions have no optional chaining** — use `$json.a && $json.a.b`. Code nodes are plain
+   JavaScript and may use `?.`.
 
 ## 🔍 Troubleshooting
 
-### Debugging Steps
-1. **Check Webhook trigger**: Confirm Slack events reach n8n
-2. **Check filter conditions**: Confirm Filter Channel Messages logic is correct
-3. **Check AI output**: View Basic LLM Chain raw response
-4. **Check data processing**: View Process AI Response console logs
-5. **Check confidence judgment**: Confirm Confidence Filter logic
-6. **Check Google Calendar**: Confirm event creation success
+| Symptom | Where to look |
+|---|---|
+| No execution at all | Slack trigger credential; bot membership in the channel; `Filter Valid Messages` conditions |
+| Execution stops after the AI node | `Analyze Message with AI` error output → check the Slack error message |
+| `AI 回應解析失敗` | The model wrapped its JSON in prose or fences — inspect `rawResponse` in the item |
+| Event created at the wrong time | `Parse AI Response` date branch; confirm workflow timezone is `Asia/Taipei` |
+| Low confidence alert when it should succeed | Compare `confidence` in the item against both threshold locations |
+| Slack message posts as raw JSON | `messageType` is `text` while blocks were supplied, or `blocksUi` got an array instead of a string |
 
-### Common Debug Code
-```javascript
-// Add debugging in any Function node
-console.log('Debug data:', JSON.stringify($json, null, 2));
-console.log('Data type:', typeof $json.confidence);
-console.log('Condition result:', $json.status === 'high_confidence');
-return [$input.all()];
-```
-
-## 📈 Performance Optimization Suggestions
-
-### 1. Reduce API Calls
-- Optimize AI prompt to reduce redundant analysis
-- Merge similar processing logic
-
-### 2. Improve Error Handling
-- Add retry mechanisms
-- Improve user-friendly error messages
-
-### 3. Enhance Features
-- Support recurring events
-- Add event editing functionality
-- Integrate other calendar services
-
-## 🆕 Extension Feature Suggestions
-
-### 1. Meeting Room Booking Integration
-- Check meeting room availability
-- Auto-book meeting rooms
-
-### 2. Participant Management
-- Auto-invite relevant people
-- Map Slack users to Gmail
-
-### 3. Smart Suggestions
-- Time suggestions based on historical data
-- Conflict detection and alternative time suggestions
-
-### 4. Multi-language Support
-- Support English and other languages
-- Internationalized time formats
+`console.log` output from Code nodes appears in the n8n execution log; all existing logs are zh-TW
+with emoji prefixes (`❌`, `⚠️`, `✅`, `📅`, `ℹ️`).
 
 ## 📝 Maintenance Notes
 
-### Regular Checks
-- [ ] Slack Token validity
-- [ ] Azure OpenAI Quota usage
-- [ ] Google Calendar API limits
-- [ ] Workflow execution logs
+- Validate with `n8n_validate_workflow` (`profile: strict`) after every change, then sync the cloud
+  copy back to this JSON file. The n8n instance is the source of truth.
+- When the prompt's JSON shape changes, update `Parse AI Response`, both IF nodes, and both block
+  builders in the same change.
+- Node versions in use: slackTrigger 1 · if 2.3 · chainLlm 1.9 · lmChatAzureOpenAi 1 · code 2 ·
+  googleCalendar 1.3 · slack 2.4.
+- The channel id `C08NVUQUK8F` is hard-coded in **six** places: the trigger, the `cond-channel`
+  filter condition, and all four Slack senders (`Send Success Notification`,
+  `Send Low Confidence Alert`, `Send No Event Reply`, `Send Error Notification`). Changing channels
+  means changing all of them.
+- Repository conventions live in `.github/copilot-instructions.md`.
 
-### Update Considerations
-- [ ] AI Model version updates
-- [ ] Slack API changes
-- [ ] Google Calendar API changes
-- [ ] n8n version compatibility
+## 🆕 Possible Extensions (not implemented)
 
-## 🔗 Related Documentation
-
-- [n8n Official Documentation](https://docs.n8n.io/)
-- [Slack API Documentation](https://api.slack.com/)
-- [Google Calendar API](https://developers.google.com/calendar)
-- [Azure OpenAI Documentation](https://docs.microsoft.com/en-us/azure/cognitive-services/openai/)
-
----
-
-## 📧 Support Information
-
-**System Version**: n8n 1.93.0
-**Last Updated**: 2025-05-28
-**Feature Status**: ✅ Production Ready
-
-For issues, please provide:
-1. Specific error messages
-2. Relevant execution logs
-3. Input test data
-4. Expected output results
+- Meeting-room booking lookup before event creation
+- Real attendee resolution from Slack user ids (requires re-enabling `sendUpdates`)
+- Interactive Slack buttons to confirm or discard low-confidence events
+- Recurring event support (the prompt currently produces a single event per message)

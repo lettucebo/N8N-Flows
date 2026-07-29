@@ -1,893 +1,427 @@
-# n8n Slack 日曆助手 - 完整實施指南
+# Slack to Google Calendar AI Assistant — 實作說明
 
-## 📋 系統概述
+> **唯一事實來源**：`Slack_to_Google_Calendar_AI_Assistant.json`（工作流程 id `I2dch7ZKvBvX6GVC`）。
+> 若本文件與 JSON 不一致，以 JSON 為準。以下所有節點名稱、版本與參數皆直接讀自該檔案。
 
-這是一個基於 n8n 的自動化工作流，能夠：
-- 監聽 Slack 頻道的訊息
-- 使用 Azure OpenAI 智能分析訊息中的日程信息
-- 自動創建 Google Calendar 事件
-- 根據信心度決定自動創建或需要確認
-- 支援全天活動和定時活動
-- 提供詳細的 Slack 通知反饋
+English version: [README.md](./README.md)
+
+## 📋 系統概覽
+
+將 Slack 訊息轉換為 Google Calendar 事件的 n8n 工作流程：
+
+- 監聽單一 Slack 頻道（`C08NVUQUK8F`）
+- 將符合條件的訊息送交 Azure OpenAI 擷取日程資訊
+- 解析模型回傳的 JSON、正規化日期並評估信心度
+- 僅在信心度 ≥ 0.7 時建立日曆事件
+- 通過過濾的訊息，一律會依四種結果之一回覆 Slack：成功、低信心度、無事件、錯誤。
+  被過濾掉的訊息則完全不會收到回覆
+
+狀態：**已啟用（active）**。所有面向使用者的文字為正體中文，節點名稱使用英文。
 
 ## 🏗️ 系統架構
 
+共 14 個節點。`Azure OpenAI gpt-5.2` 是透過 `ai_languageModel` 連接埠掛在 chain 節點上的 AI 子節點，
+不在主流程路徑上。
+
+```mermaid
+flowchart TD
+    T[Slack Message Trigger] --> F[Filter Valid Messages]
+    F -- true --> A[Analyze Message with AI]
+    M[Azure OpenAI gpt-5.2] -. ai_languageModel .-> A
+    A -- main --> P[Parse AI Response]
+    A -- error --> ERR[Send Error Notification]
+    P --> HV[Has Valid Event]
+    HV -- true --> CC[Check Confidence Score]
+    HV -- false --> NE[Send No Event Reply]
+    CC -- "信心度 >= 0.7" --> CE[Create Calendar Event]
+    CC -- "信心度 < 0.7" --> BL[Build Low Confidence Blocks]
+    CE -- main --> BS[Build Success Blocks]
+    CE -- error --> ERR
+    BS --> SS[Send Success Notification]
+    SS -- error --> ERR
+    BL --> SL[Send Low Confidence Alert]
+    SL -- error --> ERR
 ```
-Slack 訊息 → Webhook → Filter Channel Messages → Basic LLM Chain (Azure OpenAI) 
-    ↓
-Process AI Response → Confidence Filter → Event Type Filter
-    ↓                    ↓                    ↓
-Error Notification  High Confidence    Low Confidence
-                         ↓                    ↓
-                   Create Calendar    Confirmation Request
-                         ↓
-                   Success Notification
-```
 
-## 🔧 節點配置詳情
+`Filter Valid Messages` 的 `false` 分支刻意未連接——未通過過濾的訊息會靜默結束執行，不會回覆 Slack。
 
-### 1. Webhook 節點
-**名稱**: `Webhook`
-**類型**: Webhook Trigger
+## 🔧 節點設定細節
 
-**配置**:
+### 1. Slack Message Trigger
+
+**類型**：`n8n-nodes-base.slackTrigger` v1 · **憑證**：`slackApi` —「Slack account」
+
 ```yaml
-HTTP Method: POST
-Path: slack-calendar
-Response Mode: Respond With
-Response Data: ={{$json.challenge || 'OK'}}
+trigger: [message]
+channelId:
+  __rl: true
+  mode: id
+  value: C08NVUQUK8F
+options: {}
 ```
 
-**用途**: 接收 Slack Event Subscriptions 的 webhook 請求
+頻道內每則訊息都會觸發，包含機器人自己發出的回覆——這些訊息由下一個節點濾除，而非在此處理。
 
----
+### 2. Filter Valid Messages
 
-### 2. Filter Channel Messages 節點
-**名稱**: `Filter Channel Messages`
-**類型**: IF
+**類型**：`n8n-nodes-base.if` v2.3 · 組合方式：`and` · 5 個條件全部必須成立
 
-**關鍵配置**:
-```javascript
-// 條件 1: 檢查頻道
-Value 1: ={{$json.channel}}
-Operation: Equal
-Value 2: C08NVUQUK8F  // 替換為你的實際頻道 ID
+| id | 左值 | 運算 | 右值 | 用途 |
+|---|---|---|---|---|
+| `cond-channel` | `{{ $json.channel }}` | string contains | `C08NVUQUK8F` | 第二道頻道防護 |
+| `cond-type` | `{{ $json.type }}` | string equals | `message` | 排除非訊息事件 |
+| `cond-bot` | `{{ $json.bot_id }}` | string empty | — | **阻斷機器人無限迴圈** |
+| `cond-subtype` | `{{ $json.subtype }}` | string empty | — | 排除加入、編輯、刪除等事件 |
+| `cond-thread` | `{{ $json.thread_ts }}` | string empty | — | 排除討論串回覆 |
 
-// 條件 2: 檢查訊息類型
-Value 1: ={{$json.type}}
-Operation: Equal
-Value 2: message
-
-// 條件 3: 排除 Bot 訊息（防止無限循環）
-Value 1: ={{$json.user}}
-Operation: Not Equal
-Value 2: YOUR_BOT_USER_ID  // 替換為你的 Bot User ID
-
-// 條件 4: 排除系統訊息
-Value 1: ={{$json.subtype}}
-Operation: Is Empty
-
-// 條件 5: 排除回覆訊息
-Value 1: ={{$json.thread_ts}}
-Operation: Is Empty
-
-// 邏輯
-Combine: AND
+```yaml
+options:
+  caseSensitive: true
+  typeValidation: loose
+  version: 2
 ```
 
-**用途**: 過濾只處理目標頻道的用戶訊息，避免無限循環
+`cond-bot` 是防止工作流程被自己的通知重複觸發的關鍵，請勿移除。
 
----
+### 3. Analyze Message with AI
 
-### 3. Basic LLM Chain 節點
-**名稱**: `AI Message Analyzer`
-**類型**: Basic LLM Chain
+**類型**：`@n8n/n8n-nodes-langchain.chainLlm` v1.9 · `onError: continueErrorOutput`
 
-**Language Model 設定**:
-- Model: Azure OpenAI Chat Model
-- Credential: Azure OpenAI API
-- Deployment Name: 你的 Azure 部署名稱（如 gpt-4）
-
-**完整 Prompt**:
+```yaml
+promptType: define
+text: "={{ $json.text }}"          # Slack 訊息內文
+messages.messageValues[0].message: <系統提示詞，約 1,860 字元>
 ```
-你是一個專業的日程管理助手。請分析用戶的 Slack 訊息，提取可能的日程信息。
 
-🔍 地點偵測規則（重要）：
-1. 移動動詞後的地點：
-   - 「去XX」、「到XX」、「往XX」、「赴XX」
-   - 「前往XX」、「出發到XX」、「飛往XX」
-   - 範例：「去名古屋玩」→ location: "名古屋"
+系統提示詞（正體中文）要求模型：
 
-2. 位置介詞後的地點：
-   - 「在XX」、「於XX」、「位於XX」
-   - 「XX舉行」、「XX進行」、「XX召開」
-   - 範例：「在台北開會」→ location: "台北"
+- 每次分析只產生**一個主要事件**，相關活動合併寫入描述
+- 問候、閒聊、天氣、推薦等內容一律回傳 `hasEvent: false`；不確定時傾向 `false`
+- 辨識移動動詞（去／到／往／赴／前往／出發到／飛往）與位置介詞（在／於／位於）後的地點
+- 判斷全天或定時活動（旅遊、一日遊、出差、請假、節日、工作坊、多地點行程 → 全天）
+- 以 `{{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy年MM月dd日 (cccc)', { locale: 'zh-TW' }) }}` 錨定「現在」
+- 推斷年份：月份已過 → 明年；當月或之後 → 今年
+- `attendees` 一律保持**空陣列**，避免 Google Calendar 寄送邀請；與會者資訊寫進描述
+- 信心度評分：0.9+ 資訊完整、0.7–0.9 時間地點明確、0.5–0.7 部分明確、<0.5 資訊不足
 
-3. 常見地點類型：
-   - 城市/國家：台北、東京、名古屋、新加坡、美國、日本
-   - 地標/景點：101大樓、迪士尼、故宮、富士山
-   - 場所：會議室A、咖啡廳、餐廳、辦公室、家裡
-   - 線上：Zoom、Teams、Google Meet、視訊、線上
-   - 建築：XX大樓、XX中心、XX館、XX廳
+要求的輸出格式：
 
-4. 複合地點表達：
-   - 「台北101」→ location: "台北101"
-   - 「新竹科學園區」→ location: "新竹科學園區"
-   - 「會議室A」→ location: "會議室A"
-   - 「線上會議」→ location: "線上"
-
-5. 地點提取優先順序：
-   - 具體地址 > 建築名稱 > 城市名稱 > 區域名稱
-   - 如果有多個地點，選擇最具體的那個
-
-6. 特殊情況處理：
-   - 「XX玩」、「XX旅遊」、「XX出差」→ XX 是地點
-   - 「回XX」、「返回XX」→ XX 是地點
-   - 「XX見面」、「XX聚餐」→ XX 可能是地點
-
-全天活動識別規則：
-1. 旅遊活動：「去XX玩」、「XX旅遊」、「到XX」、「XX出差」
-2. 假期/休假：「請假」、「休假」、「放假」
-3. 節日/慶典：「生日」、「節日」、「活動日」
-4. 研習/課程：「研習營」、「工作坊」、「訓練營」
-5. 只提到日期沒有具體時間的活動
-
-部分時間活動識別規則：
-1. 會議：「開會」、「會議」、「討論」
-2. 簡報：「簡報」、「presentation」、「報告」
-3. 有明確時間的活動：「下午2點」、「早上」、「晚上」
-
-時間格式規則：
-- 全天活動：startDateTime 設為 "YYYY-MM-DD"（不包含時間部分）
-- 部分時間活動：使用完整的 ISO 8601 格式 "YYYY-MM-DDTHH:mm:ss+08:00"
-
-分析規則：
-1. 時間關鍵字：明天、下週、今天、具體日期、具體時間
-2. 活動關鍵字：會議、討論、簡報、培訓、研習、活動、玩、旅遊  
-3. 地點信息：會議室、地址、線上、視訊、城市名稱、建築名稱
-4. 參與者：@用戶名、職稱、部門
-5. 時間推斷：
-   - 「明天下午」→ 明天 14:00-15:00（部分時間）
-   - 「下週三開會」→ 下週三 09:00-10:00（部分時間）
-   - 「2點開會」→ 14:00-15:00（部分時間）
-   - 「去XX玩」→ 全天活動（純日期格式）
-   - 「XX研習營」→ 全天活動（純日期格式）
-   - 「請假」→ 全天活動（純日期格式）
-
-請按照以下 JSON 格式回覆，不要添加任何其他文字：
+```json
 {
   "hasEvent": true,
   "events": [
     {
-      "title": "事件標題",
+      "title": "活動標題",
       "description": "詳細描述",
-      "startDateTime": "2025-05-20",
-      "endDateTime": "2025-05-20",
+      "startDateTime": "YYYY-MM-DD 或 YYYY-MM-DDTHH:mm:ss+08:00",
+      "endDateTime": "同上",
       "isAllDay": true,
-      "location": "具體地點名稱",
-      "attendees": ["email1@example.com"],
+      "location": "地點",
+      "attendees": [],
       "confidence": 0.95
     }
   ],
-  "reasoning": "分析原因，包含地點識別邏輯"
+  "reasoning": "分析原因"
 }
-
-地點偵測範例：
-- 「5/20 去名古屋玩」→ location: "名古屋"（從「去XX玩」提取）
-- 「明天在會議室A開會」→ location: "會議室A"（從「在XX」提取）
-- 「下週到台北出差」→ location: "台北"（從「到XX出差」提取）
-- 「6/15 東京迪士尼一日遊」→ location: "東京迪士尼"（複合地點）
-- 「線上會議討論專案」→ location: "線上"（虛擬地點）
-- 「在家工作」→ location: "家裡"（居家地點）
-- 「新竹科學園區參訪」→ location: "新竹科學園區"（園區地點）
-
-活動類型與地點範例：
-- 「5/20 去名古屋玩」→ 全天活動，startDateTime: "2025-05-20", endDateTime: "2025-05-20", isAllDay: true, location: "名古屋"
-- 「明天下午2點在會議室B簡報」→ 部分時間，startDateTime: "2025-05-21T14:00:00+08:00", endDateTime: "2025-05-21T15:00:00+08:00", isAllDay: false, location: "會議室B"
-- 「6/15 台北101研習營」→ 全天活動，startDateTime: "2025-06-15", endDateTime: "2025-06-15", isAllDay: true, location: "台北101"
-- 「下週三上午10點線上會議」→ 部分時間，startDateTime: "2025-06-04T10:00:00+08:00", endDateTime: "2025-06-04T11:00:00+08:00", isAllDay: false, location: "線上"
-
-信心度評估：
-- 0.9+: 完整時間+地點+活動類型明確
-- 0.7-0.9: 明確時間和活動，地點可推斷
-- 0.5-0.7: 模糊時間或活動類型，地點不明確
-- <0.5: 缺乏關鍵信息
-
-預設設定：
-- 時區：Asia/Taipei (+08:00)
-- 部分時間活動預設時長：1小時
-- 無具體時間的會議：09:00-10:00
-- 旅遊/休假/研習等：全天活動
-- 地點提取：優先提取最具體的地點信息
-
-現在請分析以下 Slack 訊息：「={{$json.text}}」
-
-⚠️ 重要：請特別注意地點信息的提取，確保不遺漏任何地點相關的詞語。
 ```
 
-**用途**: 使用 Azure OpenAI 分析 Slack 訊息，提取日程信息
+無事件時：`{ "hasEvent": false, "events": [], "reasoning": "..." }`。
 
----
+### 4. Azure OpenAI gpt-5.2
 
-### 4. Process AI Response 節點
-**名稱**: `Process AI Response`
-**類型**: Function
+**類型**：`@n8n/n8n-nodes-langchain.lmChatAzureOpenAi` v1 · **憑證**：
+`azureEntraCognitiveServicesOAuth2Api` —「Azure Open AI account Entra ID」
 
-**完整 JavaScript 代碼**:
+```yaml
+authentication: azureEntraCognitiveServicesOAuth2Api
+model: gpt-5.2
+options: {}
+```
+
+透過 `ai_languageModel` 連接埠掛在節點 3 上。它沒有 `main` 連線也沒有錯誤輸出——模型失敗會顯示在
+chain 節點的錯誤輸出。
+
+### 5. Parse AI Response
+
+**類型**：`n8n-nodes-base.code` v2 · `mode: runOnceForAllItems`
+
+整個流程的正規化層。它不會拋出例外；每一條失敗路徑都會回傳帶 `status` 欄位的項目，供下游 IF 節點分流。
+
+1. 防護「無輸入資料」與「模型無輸出」→ `status: 'error'`
+2. 在 `JSON.parse` 前剝除程式碼圍籬（` ```json `），因為模型不一定會遵守指示
+3. 以 `$('Slack Message Trigger').first().json` 取得原始 Slack 內容，並有備援值
+4. `hasEvent` 為 false 或 `events` 為空時回傳 `status: 'no_event'`
+5. 逐一處理事件：
+   - 缺少 `title` 或 `startDateTime` 的事件直接跳過（回傳 `null`，之後被濾除）
+   - `isAllDay === true` 或兩個日期都不含 `T` 即視為全天，並以 `^\d{4}-\d{2}-\d{2}$` 驗證
+   - 定時活動以 `new Date()` 解析；若 `end <= start`，結束時間改為開始時間 + 1 小時。
+     兩者最後透過 `toISOString()` 輸出為 UTC ISO 字串——由工作流程時區換算回台北時間
+   - 日期處理失敗時，退回「明天的全天活動」
+   - `attendees` 只保留同時含 `@` 與 `.` 的值
+   - 描述中組出 `📋 來源信息：` 區塊（原始訊息、發送者、頻道、活動類型、信心度、分析說明）
+   - `confidence >= 0.7` 時 `status` 設為 `high_confidence`，否則 `low_confidence`
+6. 若所有事件都被剔除，回傳 `status: 'no_event'`
+7. 最外層 `try/catch` 會把任何未預期的錯誤轉為 `status: 'error'`——此節點永不拋錯
+
+下游會用到的輸出欄位：`eventIndex`、`title`、`description`、`startDateTime`、`endDateTime`、
+`isAllDay`、`location`、`attendees`、`confidence`、`confidenceDisplay`、`reasoning`、
+`originalMessage`、`slackUser`、`slackChannel`、`slackTimestamp`、`status`。
+
+### 6. Has Valid Event
+
+**類型**：`n8n-nodes-base.if` v2.3 · 組合方式：`and`
+
+| 左值 | 運算 | 右值 |
+|---|---|---|
+| `{{ $json.status }}` | string notEquals | `no_event` |
+| `{{ $json.status }}` | string notEquals | `error` |
+
+`false` → `Send No Event Reply`，該節點**同時**處理 `no_event` 與 `error` 兩種情況。
+
+### 7. Check Confidence Score
+
+**類型**：`n8n-nodes-base.if` v2.3 · `alwaysOutputData: false`
+
+```yaml
+leftValue: "={{ $json.confidence }}"
+operator: { type: number, operation: gte }
+rightValue: 0.7
+```
+
+⚠️ **0.7 門檻存在於兩個位置**——此處，以及 `Parse AI Response` 中設定 `status` 的三元運算式。
+必須同時修改，否則回報的狀態與實際分流會不一致。
+
+### 8. Create Calendar Event
+
+**類型**：`n8n-nodes-base.googleCalendar` v1.3 · `onError: continueErrorOutput` ·
+**憑證**：`googleCalendarOAuth2Api` —「Google Calendar account」
+
+```yaml
+operation: create
+calendar: { __rl: true, mode: list, value: abc12207@gmail.com }
+start: "={{$json.startDateTime}}"
+end:   "={{$json.endDateTime}}"
+additionalFields:
+  summary:      "={{$json.title}}"
+  description:  "={{$json.description}}"
+  location:     "={{$json.location}}"
+  allday:       "={{ $json.isAllDay ? 'yes' : 'no' }}"
+  maxAttendees: 50
+  sendUpdates:  none
+```
+
+`sendUpdates: none` 表示**不會寄出任何邀請信**，這與提示詞強制 `attendees: []` 的設計一致。
+全天活動由 `allday` 三元運算式決定——值必須是字串 `'yes'`／`'no'`，不能是布林值。
+
+### 9. Build Success Blocks
+
+**類型**：`n8n-nodes-base.code` v2 —— 讀取 Google Calendar API 的回應。
+
+- `data.start.date` → 全天，格式 `MM月dd日 (cccc)`
+- `data.start.dateTime` → 定時，起訖皆以 `DateTime.fromISO(...).setZone('Asia/Taipei')` 轉換，
+  格式 `MM月dd日 (cccc) HH:mm - HH:mm`
+- 描述摘要取 `📋 來源信息：` 標記之前的文字
+- 產生 header／section／fields／divider／actions（`📎 查看事件` 按鈕連向 `data.htmlLink`）／context 區塊
+
+回傳 `{ blocks: JSON.stringify(blocks), fallbackText }`——blocks 必須是**字串**。
+
+### 10. Send Success Notification
+
+**類型**：`n8n-nodes-base.slack` v2.4 · `onError: continueErrorOutput`
+
+```yaml
+resource: message
+operation: post
+select: channel
+channelId: { __rl: true, mode: id, value: C08NVUQUK8F }
+messageType: block
+blocksUi: "={{ $json.blocks }}"
+text:     "={{ $json.fallbackText }}"
+```
+
+### 11. Build Low Confidence Blocks
+
+**類型**：`n8n-nodes-base.code` v2 —— 以 `Parse AI Response` 的輸出（title、原樣的 `startDateTime`、
+location、`confidenceDisplay`、`reasoning`）組出提醒訊息，結尾提示使用者補上明確時間與地點後重送。
+同樣遵循 `{ blocks: JSON.stringify(...), fallbackText }` 契約。
+
+此路徑**不會**建立日曆事件。
+
+### 12. Send Low Confidence Alert
+
+**類型**：`n8n-nodes-base.slack` v2.4 · `onError: continueErrorOutput` —— 設定與節點 10 相同。
+
+### 13. Send No Event Reply
+
+**類型**：`n8n-nodes-base.slack` v2.4 · `messageType: text`
+
+單一運算式涵蓋它會收到的兩種情況：
+
 ```javascript
-// ===============================================
-// Process AI Response - 完整版 JavaScript 代碼
-// ===============================================
-
-console.log('🚀 開始處理 AI 回應...');
-
-// 1. 檢查基本輸入
-const inputData = $input.first();
-if (!inputData || !inputData.json) {
-  console.log('❌ 沒有輸入數據，停止執行');
-  return [];
-}
-
-console.log('📥 輸入數據:', JSON.stringify(inputData.json, null, 2));
-
-// 2. 取得 AI 輸出（從 text 欄位）
-const aiResponseText = inputData.json.text || inputData.json.output;
-if (!aiResponseText) {
-  console.log('❌ AI 沒有輸出文字，停止執行');
-  return [];
-}
-
-console.log('🤖 AI 原始回應:', aiResponseText);
-
-// 3. 解析 JSON 字串
-let aiOutput;
-try {
-  // 清理可能的 markdown 格式
-  const cleanResponse = aiResponseText.replace(/```json\n?|```\n?/g, '').trim();
-  aiOutput = JSON.parse(cleanResponse);
-  console.log('✅ 解析後的 AI 輸出:', JSON.stringify(aiOutput, null, 2));
-} catch (error) {
-  console.log('❌ JSON 解析失敗:', error.message);
-  return [{
-    json: {
-      status: 'error',
-      error: `AI 回應解析失敗: ${error.message}`,
-      rawResponse: aiResponseText,
-      slackUser: 'unknown',
-      slackChannel: 'unknown',
-      slackTimestamp: Date.now().toString()
-    }
-  }];
-}
-
-// 4. 檢查 Slack 原始數據
-let slackData = {};
-try {
-  // 嘗試多種方式取得 Slack 數據
-  if ($node && $node[0] && $node[0].json) {
-    slackData = $node[0].json;
-  } else if ($('Webhook') && $('Webhook').first()) {
-    slackData = $('Webhook').first().json;
-  } else if ($('Slack Webhook') && $('Slack Webhook').first()) {
-    slackData = $('Slack Webhook').first().json;
-  } else {
-    // 如果無法取得原始數據，使用預設值
-    slackData = {
-      text: '無法取得原始訊息',
-      user: 'unknown',
-      channel: 'unknown',
-      ts: Date.now().toString()
-    };
-  }
-  console.log('📱 Slack 數據:', JSON.stringify(slackData, null, 2));
-} catch (error) {
-  console.log('⚠️ 取得 Slack 數據時發生錯誤:', error.message);
-  slackData = {
-    text: '無法取得原始訊息',
-    user: 'unknown', 
-    channel: 'unknown',
-    ts: Date.now().toString()
-  };
-}
-
-// 5. 檢查 AI 是否找到事件
-if (!aiOutput.hasEvent || !aiOutput.events || aiOutput.events.length === 0) {
-  console.log('ℹ️ AI 沒有找到事件');
-  return [{
-    json: {
-      status: 'no_event',
-      message: '未找到有效的日程信息',
-      originalMessage: slackData.text,
-      slackUser: slackData.user,
-      slackChannel: slackData.channel,
-      slackTimestamp: slackData.ts,
-      reasoning: aiOutput.reasoning || '無法識別日程相關內容'
-    }
-  }];
-}
-
-// 6. 處理找到的事件（支援全天活動）
-console.log(`📅 找到 ${aiOutput.events.length} 個事件，開始處理`);
-
-try {
-  const processedEvents = aiOutput.events.map((event, index) => {
-    console.log(`🔄 處理事件 ${index}:`, JSON.stringify(event, null, 2));
-    
-    // 驗證事件是否有必要欄位
-    if (!event.title && !event.startDateTime) {
-      console.log(`⚠️ 事件 ${index} 缺少必要欄位，跳過`);
-      return null;
-    }
-
-    // 🎯 處理全天活動與部分時間活動
-    let startDateTime, endDateTime, isAllDay = false;
-    let calendarStartDateTime, calendarEndDateTime;
-    
-    try {
-      // 檢查是否為全天活動
-      const isAllDayEvent = event.isAllDay === true || 
-                           (!event.startDateTime.includes('T') && !event.endDateTime.includes('T'));
-      
-      if (isAllDayEvent) {
-        // 📅 全天活動處理
-        console.log(`📅 事件 ${index} 是全天活動`);
-        isAllDay = true;
-        
-        // 確保日期格式正確 (YYYY-MM-DD)
-        startDateTime = event.startDateTime.includes('T') 
-          ? event.startDateTime.split('T')[0] 
-          : event.startDateTime;
-        endDateTime = event.endDateTime.includes('T') 
-          ? event.endDateTime.split('T')[0] 
-          : event.endDateTime;
-          
-        // Google Calendar 全天活動格式：純日期字串
-        calendarStartDateTime = startDateTime;
-        calendarEndDateTime = endDateTime;
-        
-        // 驗證日期格式
-        if (!startDateTime.match(/^\d{4}-\d{2}-\d{2}$/)) {
-          throw new Error('全天活動日期格式錯誤');
-        }
-        
-        console.log(`✅ 全天活動時間: ${startDateTime} 到 ${endDateTime}`);
-        
-      } else {
-        // ⏰ 部分時間活動處理
-        console.log(`⏰ 事件 ${index} 是部分時間活動`);
-        isAllDay = false;
-        
-        const startDate = new Date(event.startDateTime);
-        const endDate = new Date(event.endDateTime);
-        
-        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
-          throw new Error('無效的日期時間格式');
-        }
-        
-        // 確保結束時間在開始時間之後
-        if (endDate <= startDate) {
-          endDate.setTime(startDate.getTime() + 60 * 60 * 1000);
-        }
-        
-        startDateTime = startDate.toISOString();
-        endDateTime = endDate.toISOString();
-        
-        // Google Calendar 部分時間活動格式：完整 ISO 字串
-        calendarStartDateTime = startDateTime;
-        calendarEndDateTime = endDateTime;
-        
-        console.log(`✅ 部分時間活動: ${startDateTime} 到 ${endDateTime}`);
-      }
-      
-    } catch (dateError) {
-      console.log(`⚠️ 事件 ${index} 時間處理失敗，使用預設:`, dateError.message);
-      
-      // 預設為明天的全天活動
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const dateStr = tomorrow.toISOString().split('T')[0];
-      
-      startDateTime = dateStr;
-      endDateTime = dateStr;
-      calendarStartDateTime = dateStr;
-      calendarEndDateTime = dateStr;
-      isAllDay = true;
-    }
-    
-    // 處理參與者列表
-    const attendees = (event.attendees || []).filter(email => 
-      email && email.includes('@') && email.includes('.')
-    );
-    
-    // 確保 confidence 是浮點數
-    const confidence = parseFloat(event.confidence) || 0.5;
-    console.log(`📊 事件 ${index} 信心度: ${confidence} (${Math.round(confidence * 100)}%)`);
-    
-    // 構建詳細描述
-    const description = [
-      event.description || '',
-      '',
-      '📋 來源信息：',
-      `• Slack 訊息: ${slackData.text}`,
-      `• 發送者: <@${slackData.user}>`,
-      `• 頻道: <#${slackData.channel}>`,
-      `• 活動類型: ${isAllDay ? '📅 全天活動' : '⏰ 部分時間活動'}`,
-      `• AI 分析信心度: ${Math.round(confidence * 100)}%`,
-      aiOutput.reasoning ? `• 分析說明: ${aiOutput.reasoning}` : ''
-    ].filter(line => line !== '').join('\n');
-    
-    // 🎯 根據信心度決定處理策略
-    let eventStatus;
-    if (confidence >= 0.7) {
-      eventStatus = 'high_confidence';
-      console.log(`✅ 事件 ${index} 高信心度，自動處理`);
-    } else {
-      eventStatus = 'low_confidence';
-      console.log(`⚠️ 事件 ${index} 低信心度，需要確認`);
-    }
-    
-    const processedEvent = {
-      json: {
-        eventIndex: index,
-        title: event.title || '未命名事件',
-        description: description,
-        
-        // 📅 時間信息
-        startDateTime: calendarStartDateTime,
-        endDateTime: calendarEndDateTime,
-        isAllDay: isAllDay,
-        
-        // 📍 地點和參與者
-        location: event.location || '',
-        attendees: attendees,
-        
-        // 📊 分析信息
-        confidence: confidence,
-        reasoning: aiOutput.reasoning || '',
-        
-        // 📱 原始信息
-        originalMessage: slackData.text,
-        slackUser: slackData.user,
-        slackChannel: slackData.channel,
-        slackTimestamp: slackData.ts,
-        
-        // 🔄 處理狀態
-        status: eventStatus
-      }
-    };
-    
-    console.log(`✅ 事件 ${index} 處理完成:`, JSON.stringify(processedEvent.json, null, 2));
-    return processedEvent;
-  }).filter(event => event !== null);
-
-  // 7. 檢查是否有有效的處理結果
-  if (processedEvents.length === 0) {
-    console.log('❌ 沒有有效的事件可處理');
-    return [{
-      json: {
-        status: 'error',
-        error: '所有事件都處理失敗',
-        originalMessage: slackData.text,
-        slackUser: slackData.user,
-        slackChannel: slackData.channel,
-        slackTimestamp: slackData.ts
-      }
-    }];
-  }
-
-  console.log(`🎉 成功處理 ${processedEvents.length} 個事件`);
-  console.log('📤 最終輸出:', JSON.stringify(processedEvents, null, 2));
-  
-  return processedEvents;
-  
-} catch (error) {
-  console.log('❌ 處理事件時發生錯誤:', error.message);
-  console.log('🔍 錯誤堆疊:', error.stack);
-  
-  return [{
-    json: {
-      status: 'error',
-      error: `處理失敗: ${error.message}`,
-      originalMessage: slackData.text,
-      slackUser: slackData.user,
-      slackChannel: slackData.channel,
-      slackTimestamp: slackData.ts,
-      debugInfo: {
-        errorStack: error.stack,
-        inputData: inputData.json,
-        aiOutput: aiOutput
-      }
-    }
-  }];
-}
+{{ $json.status === 'error'
+   ? '❌ 處理訊息時發生錯誤 …' + ($json.error || '未知錯誤') + '…'
+   : 'ℹ️ 此訊息未包含可辨識的日程資訊，未建立日曆事件。…' + ($json.reasoning || '無') + '…' }}
 ```
 
-**用途**: 解析 AI 輸出，處理時間格式，根據信心度分類事件
+### 14. Send Error Notification
 
----
+**類型**：`n8n-nodes-base.slack` v2.4 · `messageType: text` —— 共用的錯誤匯流節點。
 
-### 5. Confidence Filter 節點
-**名稱**: `Confidence Filter`
-**類型**: IF
-
-**配置**:
 ```javascript
-// 使用單一條件（推薦）
-Value 1: ={{$json.status === 'high_confidence'}}
-Operation: Equal
-Value 2: true
-
-// 或者使用分離條件
-// 條件 1: 狀態檢查
-Value 1: ={{$json.status}}
-Operation: Equal
-Value 2: high_confidence
-
-// 條件 2: 信心度檢查
-Value 1: ={{parseFloat($json.confidence)}}
-Operation: Greater than or equal
-Value 2: 0.7
-
-// 邏輯: AND
+{{ $json.error && $json.error.message ? $json.error.message : ($json.message || '未知錯誤') }}
 ```
 
-**用途**: 根據信心度（≥70%）決定自動創建還是需要確認
+注意此處用 `&&` 而非 `?.`：這是 n8n 運算式，不是 Code 節點的 JavaScript。
 
----
+## 🔗 節點間資料契約
 
-### 6. Create Calendar Event 節點
-**名稱**: `Create Calendar Event`
-**類型**: Google Calendar
+| 產出節點 | 取用節點 | 取用節點依賴的欄位 |
+|---|---|---|
+| Slack Message Trigger | Filter Valid Messages | `channel`、`type`、`bot_id`、`subtype`、`thread_ts` |
+| Slack Message Trigger | Parse AI Response（反向引用） | `text`、`user`、`channel`、`ts` |
+| Analyze Message with AI | Parse AI Response | `text` 或 `output`——模型原始字串 |
+| Parse AI Response | Has Valid Event | `status` |
+| Parse AI Response | Check Confidence Score | `confidence`（數值） |
+| Parse AI Response | Create Calendar Event | `startDateTime`、`endDateTime`、`isAllDay`、`title`、`description`、`location` |
+| Parse AI Response | Build Low Confidence Blocks | `title`、`startDateTime`、`location`、`confidenceDisplay`、`reasoning` |
+| Parse AI Response | Send No Event Reply | `status`、`error`、`reasoning` |
+| Create Calendar Event | Build Success Blocks | `summary`、`start`、`end`、`location`、`description`、`htmlLink`、`id` |
+| Build Success Blocks · Build Low Confidence Blocks | 各自的 Slack 發送節點 | `blocks`（字串化 JSON）、`fallbackText` |
+| 任一錯誤輸出 | Send Error Notification | `error.message` 或 `message` |
 
-**配置**:
-```javascript
-Calendar ID: primary
-Resource: Event
-Operation: Create
+`Parse AI Response` 是**唯一**以節點名稱反向引用其他節點的節點
+（`$('Slack Message Trigger')`）——這也是整份 export 中唯一一處這種引用。因此重新命名
+`Slack Message Trigger` 會直接讓該節點失效，而且 n8n 不會提出警告。
 
-// 基本欄位
-Summary: ={{$json.title}}
-Start: ={{$json.startDateTime}}
-End: ={{$json.endDateTime}}
-Description: ={{$json.description}}
-Location: ={{$json.location}}
+## 🔀 分流與錯誤處理
 
-// 🎯 關鍵設定：All Day Event
-// 方案一：使用固定值（最穩定）
-All Day Event: Yes  // 手動選擇（如果都是全天活動）
+四個節點設定 `onError: "continueErrorOutput"`，並將**第二個** `main` 輸出（index 1）接到
+`Send Error Notification`：
 
-// 方案二：使用表達式（需要動態處理）
-All Day Event: ={{Boolean($json.isAllDay)}}
+| 節點 | 可能的失敗原因 |
+|---|---|
+| `Analyze Message with AI` | 模型逾時、額度不足、回應格式錯誤 |
+| `Create Calendar Event` | OAuth 過期、日期區間無效、日曆權限不足 |
+| `Send Success Notification` | Slack 限流、Block Kit 內容無效 |
+| `Send Low Confidence Alert` | 同上 |
 
-// 其他設定
-Send Notifications: Yes
-Time Zone: Asia/Taipei
+`Send No Event Reply` 與 `Azure OpenAI gpt-5.2` 刻意不設錯誤輸出。日後若在主路徑加入可能失敗的節點，
+請一併把它的錯誤輸出接到同一個匯流節點。
+
+## ⚙️ 工作流程設定
+
+```yaml
+executionOrder: v1
+timezone: Asia/Taipei
+executionTimeout: 3600
+saveExecutionProgress: true
+saveManualExecutions: true
+saveDataErrorExecution: all
+saveDataSuccessExecution: all
+binaryMode: separate
+callerPolicy: workflowsFromSameOwner
+availableInMCP: false
 ```
 
-**已知問題**: All Day Event 欄位的表達式可能不穩定，建議使用分支處理
-
-**分支解決方案**:
-如果 All Day Event 表達式有問題，創建兩個專門節點：
-1. `Create All Day Event` - All Day: Yes (固定)
-2. `Create Timed Event` - All Day: No (固定)
-在前面用 Event Type Filter 分流
-
-**用途**: 創建 Google Calendar 事件
-
----
-
-### 7. Success Notification 節點
-**名稱**: `Success Notification`
-**類型**: Slack
-
-**配置**:
-```javascript
-Credential: Slack API
-Resource: Message
-Operation: Post
-
-// 頻道設定
-Select a Channel: By ID
-Channel ID: ={{$json.slackChannel || 'C08NVUQUK8F'}}
-
-// 訊息內容
-Text: 
-✅ **日曆事件已成功創建！**
-
-📅 **{{$json.summary}}**
-{{$json.start.date ? 
-  '🗓️ ' + $json.start.date + ' (全天活動)' : 
-  '🕐 時間: ' + $json.start.dateTime + ' - ' + $json.end.dateTime
-}}
-📍 地點: {{$json.location || '未指定'}}
-
-🔗 [查看事件]({{$json.htmlLink}})
-
-_🤖 由 AI 助手自動創建_
-
-// 回覆串設定
-Thread TS: ={{$json.slackTimestamp}}
-```
-
-**用途**: 發送成功創建事件的 Slack 通知
-
----
-
-### 8. Low Confidence Notification 節點
-**名稱**: `Low Confidence Notification`
-**類型**: Slack
-
-**配置**:
-```javascript
-Channel ID: ={{$json.slackChannel}}
-
-Text:
-⚠️ **需要確認的日程信息**
-
-我在你的訊息中找到了可能的日程，但需要確認：
-
-📝 **{{$json.title}}**
-🕐 時間: {{DateTime.fromISO($json.startDateTime).toFormat('MM/dd HH:mm')}} - {{DateTime.fromISO($json.endDateTime).toFormat('HH:mm')}}
-📍 地點: {{$json.location || '未指定'}}
-📊 信心度: {{Math.round($json.confidence * 100)}}%
-
-💭 AI 分析: _{{$json.reasoning}}_
-
-請回覆以下選項：
-✅ 確認創建
-❌ 取消
-✏️ 提供更多詳細信息
-
-Thread TS: ={{$json.slackTimestamp}}
-```
-
-**用途**: 低信心度事件需要用戶確認
-
----
-
-### 9. Error Notification 節點
-**名稱**: `Error Notification`
-**類型**: Slack
-
-**配置**:
-```javascript
-Channel ID: ={{$json.slackChannel}}
-
-Text:
-❌ **處理失敗**
-
-{{$json.status === 'no_event' ? '在你的訊息中沒有找到明確的日程信息。' : '處理你的訊息時遇到錯誤：'}}
-
-{{$json.status === 'error' ? '🐛 錯誤詳情: ' + $json.error : ''}}
-{{$json.reasoning ? '🤔 AI 分析: ' + $json.reasoning : ''}}
-
-💡 **建議格式範例：**
-• `明天下午2點團隊會議`
-• `2025-06-01 14:00 客戶簡報`
-• `下週三上午10點在會議室A討論專案`
-• `6/15 全天研習營`
-
-原始訊息: _{{$json.originalMessage}}_
-
-Thread TS: ={{$json.slackTimestamp}}
-```
-
-**用途**: 處理錯誤和無事件情況的通知
+本 repo 中只有這個工作流程帶有完整的 settings 區塊；建立新工作流程時請直接複製，不要重打。
 
 ## 🔐 憑證設定
 
-### 1. Slack API 憑證
-**類型**: Slack API
-**設定**:
-```yaml
-Access Token: xoxb-your-bot-token-here
-```
+| 憑證類型 | n8n 中的名稱 | 使用節點 |
+|---|---|---|
+| `slackApi` | Slack account | 觸發器 + 4 個 Slack 發送節點 |
+| `azureEntraCognitiveServicesOAuth2Api` | Azure Open AI account Entra ID | Azure OpenAI gpt-5.2 |
+| `googleCalendarOAuth2Api` | Google Calendar account | Create Calendar Event |
 
-**取得方式**:
-1. 前往 https://api.slack.com/apps
-2. 創建新 App 或選擇現有 App
-3. OAuth & Permissions → Bot User OAuth Token
+工作流程 JSON 只保存 `{ id, name }` 參照——實際祕密存放在 n8n，絕不可提交進版控。
+Azure OpenAI 使用 Entra ID（OAuth2），不是 API 金鑰。
 
-### 2. Azure OpenAI 憑證
-**類型**: Azure OpenAI
-**設定**:
-```yaml
-API Key: your-azure-openai-api-key
-Resource Name: your-resource-name
-API Version: 2024-02-15-preview
-```
-
-### 3. Google Calendar 憑證
-**類型**: Google Calendar OAuth2 API
-**設定**: 按照 n8n 指示完成 OAuth2 授權流程
+**Slack token**：https://api.slack.com/apps → 你的 App → OAuth & Permissions → Bot User OAuth Token。
+**Google Calendar**：在 n8n 憑證編輯畫面完成 OAuth2 授權流程。
 
 ## 🔧 Slack App 設定
 
-### Event Subscriptions 設定
-```yaml
-Request URL: https://your-n8n-domain.com/webhook-test/slack-calendar
-Subscribe to bot events:
-  - message.channels
-  - app_mention
-```
+本工作流程使用 **Slack Trigger 節點**，訂閱由 n8n 代管，**沒有**需要手動設定的 webhook URL。
 
-### Bot Token Scopes
 ```yaml
-必要權限:
+必要的 Bot Token Scopes：
   - channels:read
   - channels:history
   - chat:write
   - users:read
-  - app_mentions:read
 
-可選權限:
+選用：
   - chat:write.public
   - reactions:read
 ```
 
-## 🚨 已知問題和解決方案
+機器人必須是 `C08NVUQUK8F` 的成員，才能接收訊息並發布回覆。
 
-### 1. 無限循環問題
-**問題**: Bot 發送的通知會觸發新的 workflow
-**解決**: 在 Filter Channel Messages 中添加 Bot 過濾
-```javascript
-Value 1: ={{$json.user}}
-Operation: Not Equal
-Value 2: YOUR_BOT_USER_ID
-```
-
-### 2. All Day Event 表達式問題
-**問題**: `={{$json.isAllDay ? 'Yes' : 'No'}}` 不被接受
-**解決**: 使用分支處理或固定值
-```javascript
-// 方案 1: 分支處理
-Event Type Filter → true → Create All Day Event (All Day: Yes)
-                  → false → Create Timed Event (All Day: No)
-
-// 方案 2: 嘗試不同表達式
-={{Boolean($json.isAllDay)}}
-={{$json.isAllDay === true}}
-```
-
-### 3. Confidence 判斷問題
-**問題**: 浮點數比較失敗
-**解決**: 使用 `parseFloat()` 確保數值類型
-```javascript
-={{parseFloat($json.confidence) >= 0.7}}
-```
-
-### 4. 全天活動時間格式問題
-**問題**: Google Calendar 顯示 08:00-08:00 而不是全天
-**確認**: 檢查 Google Calendar 輸出格式
-```json
-// ✅ 正確的全天活動格式
-"start": {"date": "2025-05-20"}
-"end": {"date": "2025-05-20"}
-
-// ❌ 錯誤的格式
-"start": {"dateTime": "2025-05-20T08:00:00+08:00"}
-```
+> 上述 scopes 屬於 Slack App 的外部部署設定，**不會**保存在工作流程匯出檔中，
+> 因此無法對 JSON 驗證——請當作部署檢查清單使用。
 
 ## 🧪 測試案例
 
-### 全天活動測試
-```
-輸入: "5/20 去名古屋玩"
-預期輸出:
-- title: "去名古屋玩"
-- startDateTime: "2025-05-20"
-- endDateTime: "2025-05-20" 
-- isAllDay: true
-- location: "名古屋"
-- confidence: 0.9+
-```
+在受監控的頻道張貼下列訊息，並檢查執行紀錄。
 
-### 定時活動測試
-```
-輸入: "明天下午2點團隊會議"
-預期輸出:
-- title: "團隊會議"
-- startDateTime: "2025-05-XX T14:00:00+08:00"
-- endDateTime: "2025-05-XX T15:00:00+08:00"
-- isAllDay: false
-- confidence: 0.8+
-```
+| 輸入 | 預期路徑 | 預期結果 |
+|---|---|---|
+| `5/20 去名古屋玩` | 高信心度 | 全天事件，`startDateTime` = `YYYY-05-20`（年份推斷），地點名古屋，含 `📎 查看事件` 按鈕 |
+| `明天下午 2 點團隊會議` | 高信心度 | 定時事件 14:00–15:00（台北時間），成功訊息區塊 |
+| `可能會有個會議` | 低信心度 | 不建立事件，回覆 `⚠️ 發現可能的日程` |
+| `今天天氣真好` | `no_event` | 回覆 `ℹ️ 此訊息未包含可辨識的日程資訊` |
+| 機器人自己發送的訊息 | 被過濾 | 不執行、不回覆 |
+| 討論串回覆 | 被過濾 | 不執行、不回覆 |
 
-### 低信心度測試
-```
-輸入: "可能要開會"
-預期結果: 觸發 Low Confidence Notification
-```
+年份推斷遵循提示詞規則：月份已過則解析為明年。
 
-### 無事件測試
-```
-輸入: "今天天氣很好"
-預期結果: 觸發 Error Notification (no_event)
-```
+## 🚨 已知行為與注意事項
 
-## 🔍 故障排除
+1. **機器人迴圈** —— 由 `Filter Valid Messages` 的 `cond-bot`（`bot_id` 為空）阻擋。
+   移除後，每則通知都會再次觸發工作流程。
+2. **全天旗標** —— `additionalFields.allday` 必須收到 `'yes'`／`'no'` 字串。正確的全天事件，
+   Google 會回傳 `"start": { "date": "YYYY-MM-DD" }`；若看到 `"start": { "dateTime": ... }`，
+   代表旗標未生效。
+3. **信心度是浮點數** —— `Parse AI Response` 執行 `parseFloat(event.confidence) || 0.5`，
+   IF 節點以 `type: number` 比較。若維持字串型別，比較會失效。
+4. **Block Kit 必須字串化** —— `blocksUi` 接收的是 `JSON.stringify(blocks)`。
+   本 repo 所有 Block Kit 訊息都採用此形式。
+5. **不會寄送邀請** —— `sendUpdates: none` 加上提示詞強制的 `attendees: []`。
+   與會者資訊只出現在事件描述中。（`CHANGELOG.md` 1.0.3 宣稱 `sendUpdates: all` 且已設定提醒，
+   但 JSON 中兩者皆無。）
+6. **過濾失敗是靜默的** —— `Filter Valid Messages` 拒絕訊息時不會回覆 Slack。
+7. **運算式不支援選擇性串連** —— 請用 `$json.a && $json.a.b`。Code 節點是純 JavaScript，可以用 `?.`。
 
-### 調試步驟
-1. **檢查 Webhook 觸發**: 確認 Slack 事件有到達 n8n
-2. **檢查過濾條件**: 確認 Filter Channel Messages 邏輯正確
-3. **檢查 AI 輸出**: 查看 Basic LLM Chain 的原始回應
-4. **檢查數據處理**: 查看 Process AI Response 的 console 日誌
-5. **檢查信心度判斷**: 確認 Confidence Filter 邏輯
-6. **檢查 Google Calendar**: 確認事件創建成功
+## 🔍 疑難排解
 
-### 常用調試代碼
-```javascript
-// 在任何 Function 節點中添加調試
-console.log('調試數據:', JSON.stringify($json, null, 2));
-console.log('數據類型:', typeof $json.confidence);
-console.log('條件結果:', $json.status === 'high_confidence');
-return [$input.all()];
-```
+| 症狀 | 檢查位置 |
+|---|---|
+| 完全沒有執行紀錄 | Slack 觸發器憑證、機器人是否在頻道內、`Filter Valid Messages` 條件 |
+| 執行在 AI 節點後中斷 | `Analyze Message with AI` 的錯誤輸出 → 檢視 Slack 錯誤通知 |
+| 出現 `AI 回應解析失敗` | 模型把 JSON 包在敘述或圍籬中——檢查項目中的 `rawResponse` |
+| 事件時間錯誤 | `Parse AI Response` 的日期分支；確認工作流程時區為 `Asia/Taipei` |
+| 應該成功卻收到低信心度提醒 | 比對項目中的 `confidence` 與兩處門檻設定 |
+| Slack 訊息顯示成原始 JSON | `messageType` 為 `text` 卻傳入區塊，或 `blocksUi` 收到陣列而非字串 |
 
-## 📈 性能優化建議
-
-### 1. 減少 API 調用
-- 優化 AI prompt 減少重複分析
-- 合併相似的處理邏輯
-
-### 2. 改進錯誤處理
-- 添加重試機制
-- 改進錯誤訊息的用戶友好性
-
-### 3. 增強功能
-- 支援週期性事件
-- 添加事件編輯功能
-- 整合其他日曆服務
-
-## 🆕 擴展功能建議
-
-### 1. 會議室預訂整合
-- 檢查會議室可用性
-- 自動預訂會議室
-
-### 2. 參與者管理
-- 自動邀請相關人員
-- 從 Slack 用戶映射到 Gmail
-
-### 3. 智能建議
-- 基於歷史數據的時間建議
-- 衝突檢測和替代時間建議
-
-### 4. 多語言支援
-- 支援英文和其他語言
-- 國際化時間格式
+Code 節點的 `console.log` 輸出會出現在 n8n 執行紀錄中；現有記錄皆為正體中文並帶 emoji 前綴
+（`❌`、`⚠️`、`✅`、`📅`、`ℹ️`）。
 
 ## 📝 維護注意事項
 
-### 定期檢查
-- [ ] Slack Token 有效性
-- [ ] Azure OpenAI Quota 使用量
-- [ ] Google Calendar API 限制
-- [ ] Workflow 執行日誌
+- 每次變更後以 `n8n_validate_workflow`（`profile: strict`）驗證，再把雲端版本同步回此 JSON 檔。
+  n8n 實例才是事實來源。
+- 提示詞的 JSON 結構若變更，必須在同一次修改中一併更新 `Parse AI Response`、兩個 IF 節點與
+  兩個區塊建構節點。
+- 目前使用的節點版本：slackTrigger 1 · if 2.3 · chainLlm 1.9 · lmChatAzureOpenAi 1 · code 2 ·
+  googleCalendar 1.3 · slack 2.4。
+- 頻道 id `C08NVUQUK8F` 硬編碼在**六**個位置：觸發器、`cond-channel` 過濾條件，以及四個 Slack
+  發送節點（`Send Success Notification`、`Send Low Confidence Alert`、`Send No Event Reply`、
+  `Send Error Notification`）。換頻道時必須全部一起改。
+- Repo 的整體慣例請見 `.github/copilot-instructions.md`。
 
-### 更新考量
-- [ ] AI Model 版本更新
-- [ ] Slack API 變更
-- [ ] Google Calendar API 變更
-- [ ] n8n 版本兼容性
+## 🆕 可能的擴充方向（尚未實作）
 
-## 🔗 相關文檔
-
-- [n8n 官方文檔](https://docs.n8n.io/)
-- [Slack API 文檔](https://api.slack.com/)
-- [Google Calendar API](https://developers.google.com/calendar)
-- [Azure OpenAI 文檔](https://docs.microsoft.com/en-us/azure/cognitive-services/openai/)
-
----
-
-## 📧 支援信息
-
-**系統版本**: n8n 1.93.0
-**最後更新**: 2025-05-28
-**功能狀態**: ✅ 生產可用
-
-如有問題，請提供：
-1. 具體的錯誤訊息
-2. 相關的執行日誌
-3. 輸入的測試數據
-4. 期望的輸出結果
+- 建立事件前先查詢會議室可用性
+- 從 Slack user id 解析真實與會者（需要重新啟用 `sendUpdates`）
+- 以 Slack 互動式按鈕確認或捨棄低信心度事件
+- 支援週期性事件（目前提示詞每則訊息只產生單一事件）

@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## [1.0.4] - 2026-07-29
+### Documentation
+- Rewrote **Slack to Google Calendar AI Assistant** documentation to match the exported workflow JSON:
+  - Replaced the outdated 9-node, webhook-based description with the actual 14-node graph (Slack Trigger → Filter Valid Messages → Analyze Message with AI → Parse AI Response → Has Valid Event → Check Confidence Score → …).
+  - Documented the shared error sink: four nodes route `onError: continueErrorOutput` into `Send Error Notification`.
+  - Documented the Slack Block Kit contract (`blocks` must be a `JSON.stringify` string) and the two block builder nodes.
+  - Documented the duplicated 0.7 confidence threshold in `Parse AI Response` and `Check Confidence Score`.
+  - Documented workflow settings, credential types, and the Slack Trigger (no manual webhook URL).
+  - Kept `README.md` and `README.zh-tw.md` section-for-section aligned.
+
+### Repository tooling
+- Added `.mcp.json` for GitHub Copilot CLI MCP server configuration.
+- Expanded `.github/copilot-instructions.md` with export-file contract, local checks, cross-node contracts, and credential handling rules.
+
+### Corrections
+- `sendUpdates` is `none`, not `all` as stated in 1.0.3; no reminders are configured in `additionalFields`. The 1.0.3 entry describes changes that are not present in the exported workflow.
+
 ## [1.0.3] - 2025-06-01
 ### Enhancements
 - Updated **Slack to Google Calendar AI Assistant**:
