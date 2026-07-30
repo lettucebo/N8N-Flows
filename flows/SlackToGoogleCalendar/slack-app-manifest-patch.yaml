@@ -1,0 +1,186 @@
+# Slack App 設定 — 一次到位，只重裝一次
+#
+# 最後驗證：2026-07-30（實測本 workspace 的 token，非照抄文件）
+#
+# 這份檔案的目標是：**一次把所有可能需要的權限設好，之後不必再重裝 App**。
+# 重裝 App 的代價很高（Bot Token 會輪換，見警告 B），所以寧可一次多要一點。
+#
+# ============================================================================
+# ⛔ 最重要的一件事：scope 列表是「取代」，不是「追加」
+# ============================================================================
+#
+# App Manifest 存檔時會用你貼上的 scope 列表**整份取代**現有列表。
+# 本 App 目前已被授予 22 個 scope，而本檔舊版只列了 16 個 ——
+# 直接貼舊版會**靜默移除 10 個現有權限**：
+#
+#   channels:write.topic, channels:write.invites, files:write, im:read,
+#   mpim:read, usergroups:read, usergroups:write, users.profile:read,
+#   app_mentions:read, remote_files:read
+#
+# 下方 oauth_config 已經是「現有 22 個 ∪ v2 需要的 ∪ 未來可能需要的」的**聯集**，
+# 貼上去只會增加、不會減少。請整段使用，不要自行刪減。
+#
+# ============================================================================
+# ⚠️ 三個必讀警告
+# ============================================================================
+#
+#   A. 絕對不要啟用「Activate Public Distribution」（散布設定）。
+#      一旦被歸類為 commercially distributed，conversations.replies 會從
+#      Tier 3 (50+/min) 掉到 1 request/min，thread 對話方案將無法運作。
+#      來源：https://docs.slack.dev/apis/web-api/rate-limits/
+#
+#   B. 重新安裝後 Bot User OAuth Token (xoxb-...) 會變更。
+#      **生產版 v1 與 v2 會同時失效**，直到 n8n 的 Slack credential
+#      （id H8RWtu7aOphSXGk5，名稱 "Slack account"）更新為新 token 為止。
+#      請在非尖峰時段操作，並在按下 Reinstall 後**立刻**更新 credential。
+#      注意：app_id 與 bot_user_id **不會**因重裝而改變，所以 workflow 內
+#      寫死的 'A08LUAXNTD2' / 'U08MEH30GSU' 不需要跟著改。
+#
+#   C. request_url 請保留你現有的 n8n webhook URL，不要用下面的佔位字串。
+#      改錯會讓 Slack 停止投遞事件，v1 也會一起停擺。
+#
+# ============================================================================
+# 使用方式
+# ============================================================================
+#   1. 開 https://api.slack.com/apps → 選你的 App（app_id A08LUAXNTD2）
+#   2. 左側「App Manifest」→ 切到 YAML 檢視
+#   3. 把 oauth_config.scopes.bot 整段換成下方清單
+#      把 settings.event_subscriptions.bot_events 整段換成下方清單
+#      （display_information / features / oauth_config.scopes.user /
+#        oauth_config.redirect_urls / settings.*_enabled 等一律保留原值）
+#   4. Save Changes → Slack 提示需重新安裝 → 「Reinstall to Workspace」
+#   5. **立刻**複製新的 Bot User OAuth Token，更新 n8n 的 Slack credential
+#   6. 順手補上 Signing Secret（見下方「強烈建議一併處理」）
+#   7. 執行下方「安裝後驗證」
+#
+# ============================================================================
+# ✅ 已驗證事項（2026-07-30，對真實環境實測，非推論）
+# ============================================================================
+#
+#   - request_url `https://n8n.yu.money/webhook/d8c9a4e7-…-1234567890ab/webhook`
+#     **確認可用**。以 Slack 的 url_verification 握手實際重放：帶
+#     `x-slack-request-timestamp` 標頭 POST 過去，回 HTTP 200 並正確 echo challenge。
+#     → 按下 Save 時 Slack 的 URL 驗證會通過。
+#     → 該 URL 對 v1 與 v2 皆有效（兩者共用同一個 webhookId），**不要修改這個欄位**。
+#
+#   - n8n 用的是 **Bot Token（xoxb-）**，不是 User Token。以 auth.test 回應含
+#     `bot_id: B08MEH2TRLG` 判定。全 instance 只有**一個** Slack credential
+#     （`H8RWtu7aOphSXGk5`），被 3 個 workflow 共 17 個節點共用 ——
+#     所以重裝後只需要更新這一個地方，但那一個地方會同時影響全部三個 workflow。
+#
+#   - `oauth_config.scopes.user` 的 22 個 user scope 與 n8n 無關（n8n 不用 user token）。
+#     本檔不更動它們；保留原樣即可。
+#
+# ============================================================================
+# 🔓 強烈建議一併處理：目前沒有設定 Signing Secret
+# ============================================================================
+#
+# 實測發現：對 webhook URL 送出**帶假簽章**的請求，n8n 仍回 HTTP 200。
+# 原因是 n8n 的 Slack Trigger 在 credential 未填 Signing Secret 時會跳過簽章驗證
+# （SlackTriggerHelpers.ts L118 `skipIfNoExpectedSignature`）。
+#
+# 後果：**任何知道這個 webhook URL 的人，都能偽造 Slack 事件送進 workflow**，
+# 進而讓 AI 分析並在你的 Google 日曆建立事件。URL 本身並不是秘密等級的保護。
+#
+# 修法（趁重裝時一起做，不必額外重裝）：
+#   1. Slack App → 左側「Basic Information」→ App Credentials → Signing Secret → Show
+#   2. 複製該值
+#   3. n8n → Credentials → 「Slack account」(H8RWtu7aOphSXGk5) → 填入 Signature Secret 欄位
+#   4. 驗證：對 webhook URL 送一個帶假簽章的 POST，應改回 HTTP 401
+#
+# 注意：Signing Secret **不會**因為重新安裝 App 而改變，所以設定一次即可長期有效。
+
+oauth_config:
+  scopes:
+    bot:
+      # ---------------------------------------------------------------
+      # 第一層：v2 現在就會呼叫（已由 workflow JSON 逐一比對確認）
+      # ---------------------------------------------------------------
+      - channels:history        # Slack Trigger 收訊息 + conversations.replies 讀 thread
+      - chat:write              # chat.postMessage ×6（六張卡片全部）
+      - files:read              # Download Image 抓 url_private
+      - reactions:write         # reactions.add（Add Suppress Reaction）
+      # 註：以上四項**目前的 token 都已具備**，v2 今天就能跑。
+
+      # ---------------------------------------------------------------
+      # 第二層：現有已授予，必須保留（否則會被靜默移除）
+      # ---------------------------------------------------------------
+      - channels:read           # 取 channel 名稱
+      - groups:read             # 取私人 channel 名稱
+      - groups:history          # 私人 channel 的訊息與 thread
+      - im:read                 # 私訊 metadata
+      - im:history              # 私訊內容
+      - mpim:read               # 群組私訊 metadata
+      - mpim:history            # 群組私訊內容
+      - reactions:read          # 讀 reaction（v2 的 ✅ 備援判定）
+      - users:read              # 卡片顯示人名而非 U08XXXX
+      - users.profile:read      # 讀使用者 profile
+      - usergroups:read         # 讀 user group
+      - usergroups:write        # 寫 user group
+      - channels:write.topic    # 設定 channel 主題
+      - channels:write.invites  # 邀請成員進 channel
+      - chat:write.public       # 免邀請即可發訊息到公開 channel
+      - files:write             # 上傳檔案（未來附 .ics 或圖片回覆）
+      - app_mentions:read       # 收 @提及
+      - remote_files:read       # 讀外部檔案
+
+      # ---------------------------------------------------------------
+      # 第三層：本次新增，為了未來不必再重裝
+      # ---------------------------------------------------------------
+      - metadata.message:read   # 訂閱 message_metadata_* 事件時才需要。
+                                # v2 走的是 Web API（conversations.replies?include_all_metadata=true），
+                                # 2026-07-30 實測**不需要**此 scope 也能讀回自己寫的 metadata。
+                                # 仍納入，純粹為了日後改走 Events API 時免重裝。
+      - im:write                # 回覆私訊（私訊建立行程）
+      - team:read               # 讀 workspace domain，用來組 message permalink
+      - chat:write.customize    # 自訂 bot 名稱／頭像，訊息美化用
+      - users:read.email        # 取得使用者 email，才能把 attendees 真的加進 Google 日曆
+                                # （v1 算了 attendees 卻從未使用，要補這個洞就需要它）
+                                # Slack 要求必須與 users:read 一起請求 —— 已同時列出
+      - channels:join           # bot 自行加入公開 channel，不必人工 /invite
+      - groups:write            # 管理已被加入的私人 channel（非發訊息用；發訊息是 chat:write）
+                                # 與已授予的 channels:write.* 對稱，未來擴到私人 channel 時免重裝
+      - commands                # 斜線指令／快捷（例如未來的 /行程 明天下午三點開會）
+                                # 注意：真的要新增斜線指令時仍需再存檔一次 manifest，
+                                # 但先拿著 scope 可省掉權限層面的重裝
+
+settings:
+  event_subscriptions:
+    request_url: <<< 保留你現有的 n8n webhook URL，不要改成這行 >>>
+    bot_events:
+      - message.channels        # 公開 channel（現行已有，v1 靠它運作）
+      - message.groups          # 私人 channel
+      - message.im              # 私訊
+      - message.mpim            # 群組私訊
+      - reaction_added          # 以 emoji 確認
+      - app_mention             # @提及觸發
+
+# ============================================================================
+# 安裝後驗證
+# ============================================================================
+#
+# 1. 確認 scope 真的都在（不要只看 UI，要看 token 實際帶的權限）：
+#      POST https://slack.com/api/auth.test   （帶新的 xoxb token）
+#      → 讀回應標頭 x-oauth-scopes，比對上面 30 個 scope 是否都在
+#      → 同時確認回應含 bot_id（代表確實是 bot token）
+#      → app_id 應仍為 A08LUAXNTD2，bot user_id 應仍為 U08MEH30GSU（重裝後皆不變，
+#        所以 workflow 內寫死的這兩個值不需要跟著改）
+#
+# 2. 確認 n8n credential 已更新：在 n8n 手動執行任一 Slack 節點。
+#    若回 invalid_auth 代表 credential 還是舊 token。
+#    ⚠️ 這一個 credential 同時影響 Jen Daily Schedule Alert、
+#       Daily Currency Exchange Rate Alert、Slack to Google Calendar（v1 與 v2）。
+#
+# 3. 確認事件仍會投遞：在 #C08NVUQUK8F 發一則測試訊息，
+#    到 n8n 執行紀錄確認有新的 execution 產生。
+#
+# 4. 確認 Signing Secret 生效：對 webhook URL 送出帶假簽章的 POST，
+#    應回 HTTP 401（設定前會回 200）。
+#
+# ============================================================================
+# 已知的權限邊界（不是疏漏，是設計事實）
+# ============================================================================
+#
+# 授權邊界等同 Slack 頻道的成員名單：任何能在該頻道發言的人，
+# 都能建立事件並寫進目標日曆。isOwner 只保護「已建立事件的後續修改」。
+# 若不接受這個邊界，最簡單的收斂方式是把頻道改為私人頻道並控管成員。

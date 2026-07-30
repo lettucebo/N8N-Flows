@@ -1,5 +1,107 @@
 # CHANGELOG
 
+## [1.0.7] - 2026-07-30
+
+### Fixes
+- **Fixed a regression I introduced in v2: the Azure credential appeared to "expire hourly".** It did not. v1 called Azure through the LangChain `lmChatAzureOpenAi` node; v2 called it through `httpRequest` with `authentication: predefinedCredentialType`. Those take different auth paths, and only the latter is affected.
+  - Proven side by side, same credential, same minute: the LangChain node returned `{"text":"{\"ok\":true}"}` while `httpRequest` returned `OAuth access token expired and no refresh token is available`.
+  - Cause: `httpRequest` uses n8n's generic OAuth2 helper, which reuses a stored access token and renews it with a `refresh_token`. This Entra credential mints tokens with `grant_type: client_credentials` (injected through `additionalBodyProperties`) while declaring `grantType: authorizationCode`; client-credentials responses carry no refresh token, so once the stored token expired the call failed permanently. The LangChain node acquires its own token and is unaffected — which is exactly why this never happened before v2.
+  - **Fix: `Call Azure OpenAI` (httpRequest) was replaced by `Analyze With Azure` (`chainLlm` v1.9) plus `Azure OpenAI gpt-5.2` (`lmChatAzureOpenAi` v1)**, restoring v1's working auth path while keeping v2's vision support. Entra ID authentication is retained, as required.
+  - Vision is preserved: `chainLlm` accepts images, but only through **static** message slots, and an empty slot makes the node fail outright (verified). `Build Azure Payload` therefore always emits four slots and pads unused ones with a 1×1 transparent PNG, with the system prompt instructing the model to ignore blanks. Verified: with one real image and three blanks the model still extracted `季度營運檢討會議 / 2026-10-08 / 14:30–16:00 / 台北辦公室 12F 大會議室` and reported `realImages: 1`.
+  - `Parse AI Response` now reads `$json.text` (the chain's output) and keeps the old `choices[0].message.content` shape as a fallback, so the node survives a future switch back to a REST call.
+  - **Verified end to end with the credential still un-reconnected** — the decisive test, since the old path was failing at that exact moment. Full run: `Filter Valid Messages → Add Seen Reaction → Fetch Thread Replies → Collect Thread Context → Build Azure Payload → Azure OpenAI gpt-5.2 → Analyze With Azure → Parse AI Response → Remove Seen Reaction → Route Outcome → Create Calendar Event → Send Success Card → Verify Card Delivery → Add Success Reaction`, with `intent=create`, `confidence=0.9`, `title="情人節晚餐"`. Production is 34 nodes / 48 connections, MCP strict `valid: true`, `errorCount: 0`.
+  - The test event this created in the production calendar was removed afterwards.
+
+### Corrections to 1.0.6
+- The 1.0.6 entry blamed the hourly failures on the credential and recommended switching to an API key. **That diagnosis was wrong**: the credential is fine, and the API-key suggestion was unnecessary — Entra ID works, through the right node.
+- Things ruled out along the way, recorded so they are not re-attempted: the whole `messages` parameter cannot be an expression (it runs but the images never reach the model, `seen: 0` for 1 and 3 images); `PATCH /credentials/{id}` replaces `data` wholesale rather than merging (returns 400 demanding `resourceName`/`apiVersion`), so a credential cannot be adjusted without its secrets; and literal JSON braces in a chainLlm prompt are safe.
+
+### Documentation
+- Both READMEs regenerated from the live 34-node workflow; coverage 34/34 in each language.
+
+## [1.0.6] - 2026-07-30
+
+### Promotion
+- **v2 is now the production workflow.** Its content was written into the existing production workflow `I2dch7ZKvBvX6GVC` rather than activating the test copy, so the workflow id, webhook path and execution history all carry over and the repo file's id binding stays valid. Production went from 14 nodes / 16 connections to **33 nodes / 47 connections**; MCP strict on the promoted workflow reports `valid: true`, `errorCount: 0`, `invalidConnections: 0`.
+  - The live v1 definition was saved to a backup file before promotion, and remains recoverable from git history.
+  - `RJiCNKlVQ4EhVyMS` is kept as an inactive test copy still pointing at the disposable test calendar.
+  - `Slack_to_Google_Calendar_AI_Assistant.json` now holds the promoted workflow, and the redundant `.v2.json` was removed — one export per workflow, as the naming contract requires. The file is also written without the UTF-8 BOM it previously carried, matching the other three exports.
+- Both READMEs were regenerated **from the live workflow** rather than hand-edited, so the node table, topology, routing branches, settings and credential list cannot drift. Coverage went from 4/33 to **33/33** node names in each language.
+
+### Fixes
+- **`Normalize Error` now reports the correct failing stage.** It previously labelled every failure 「讀取 Slack 對話」. The stage and the calendar-written flag are now derived from `$prevNode.name`, which is node-level metadata and does not depend on item pairing. Verified live: a forced failure at `Call Azure OpenAI` produced `previousNode: Call Azure OpenAI` → stage 「呼叫 AI 解析」, and a failure at `Collect Thread Context` produced 「整理對話內容」.
+  - The connected risk is closed too: `calendarWritten` no longer relies solely on `pick()`. If the failure happened at or after a card-send node, the calendar must already have been written, so the error card can no longer tell a user to retry after the event was created — the duplicate-event trap the code comments (rd-json BLOCKING #4) exist to prevent.
+  - Correction to an earlier entry: `$()` is **not** uniformly broken on an error branch. In the same execution where `reached('Build Azure Payload')` returned false, `$('Slack Message Trigger')` resolved correctly. The failure is per-node item pairing, not the error branch as such.
+- **The MCP strict false positive is gone.** The validator flags nodes whose names carry failure semantics when they share a `main[0]` with others. Restructuring alone did not clear it, and neither did the first rename; renaming `Add Error Reaction` → `Add Alert Reaction` did. Production now validates with `errorCount: 0`.
+
+### Incidents found
+- **The Azure credential cannot renew itself and dies roughly hourly.** `azureEntraCognitiveServicesOAuth2Api` injects `{"grant_type":"client_credentials"}` through `additionalBodyProperties` while declaring `grantType: authorizationCode`; the client-credentials flow returns no refresh token, so once the access token expires n8n fails with `no refresh token is available`. Observed directly: reconnected at ~10:50, working 11:00–11:35, expired again by 13:07. A manual reconnect is therefore a temporary fix, not a solution. Durable options: turn off "send additional body properties" so the standard authorization-code flow with `offline_access` issues a refresh token, or move to an API-key `azureOpenAiApi` credential, which does not expire.
+
+### Testing notes
+- Playwright posting via `Enter` silently failed while reporting success — the message never reached Slack. Two causes: a stuck "Loading thread…" flexpane captured the composer, and the DOM-based confirmation matched text that was not actually posted. Reliable posting requires closing the pane, scoping to the channel's own `[data-qa="message_input"]`, clicking Slack's send button, and confirming through `conversations.history` rather than the DOM.
+
+## [1.0.5] - 2026-07-30
+
+### Live testing (first ever real execution of v2)
+- Drove Slack's web UI with Playwright, posting as a **real human account** (bot-posted messages are self-filtered and cannot exercise the flow). After the user reconnected the Azure credential, **the whole pipeline ran end to end for the first time**:
+  - **Timed event** — 「明天下午三點跟客戶開會，大概一小時」 → confidence 0.90 → created `2026-07-31 15:00–16:00`.
+  - **All-day event** — 「8月15號健康檢查」 → `2026-08-15` with an exclusive end of `08-16`, confirming the all-day end-date handling.
+  - **Low confidence** — 「下週找個時間跟設計團隊聊一下」 → 0.38 → clarify card, no event.
+  - **Non-event chatter** — 「大家早安，今天也要加油」 → `aiHasEvent=false`, confidence 0.05 → no event, ➖ reaction only.
+  - **Image understanding** — a generated meeting-notice PNG carrying the date only in pixels → confidence **0.94**, extracting `2026-10-08 14:30–16:00`, the title and the room. `Download Image` fetched `url_private` successfully, confirming the deliberate httpRequest 4.2 cross-origin-credentials choice.
+  - **Thread modification** — root 「9月10號下午兩點跟客戶簡報」, then 「改到三點」 and 「地點改成台中辦公室」 both produced `intent=update` and **updated the same `eventId`**; a verbatim restatement was routed to a clarify card rather than creating a duplicate. The calendar ended with exactly one such event.
+- Internal behaviours now proven by real runs: bot messages stop after 2 nodes (no feedback loop); the hardcoded Slack ID fallbacks are live (`botAppIdConfigured: true`); `round` increments correctly across a 4-message thread; thread history carries `[user]`/`[bot]` labels with per-message timestamps; test-calendar isolation held and was purged afterwards.
+- Corrected an earlier misreading: a thread reply describing a *different* event creates a second event **by design** (`isDuplicate` compares start+title). The case that looked like a bug came from a corrupted test message that concatenated two scenarios.
+
+### Enhancements
+- **Message-level acknowledgement reactions.** v2 previously had exactly one reaction (➖ when the AI found no event); every other outcome gave no feedback on the message itself, even though the manifest comment claimed ➖ ❓ ✅ ⚠️ were in use. Reactions now follow a two-stage model: 👀 `eyes` is added the moment a message passes `Filter Valid Messages`, then removed and replaced by the outcome emoji — ✅ created, 🔄 updated, ❓ needs clarification, ♻️ duplicate, 🔒 not the owner, ➖ ignored, ⚠️ failed. Verified live: 👀 at t+4s, gone by t+8s, outcome emoji from t+14s, never more than one reaction at a time. Seven nodes added (26 → 33).
+  - Every reaction targets the message that triggered the run, so a thread reply is marked on itself rather than on the thread root; `Add Suppress Reaction` was retargeted to match.
+  - All reaction nodes use `onError: continueRegularOutput`: they are cosmetic, and `already_reacted` / `no_reaction` responses must never fail a run.
+  - Normal-path nodes resolve the target through `$('Slack Message Trigger')`; error-path nodes cannot use `$()` (see the `Normalize Error` defect) and read `channel`/`threadTs` from `Normalize Error`'s own output instead.
+  - **MCP strict now reports 1 error on this workflow and it is a false positive.** It sees several nodes named "…Error…" sharing `Normalize Error`'s `main[0]` and suggests moving them to `main[1]`; `Normalize Error` is a Code node with no `onError`, so `main[1]` does not exist and following that advice would break the flow. Renaming two of the nodes did not clear it because `Send Error Card` alone triggers the heuristic.
+
+### Incidents found
+- **Production is down for AI analysis, and there is no working AI credential on the instance at all.** *(Resolved 2026-07-30: the user reconnected `82mlP2DDo7j1VGdC`; a live call now returns `model=gpt-5.2-2025-12-11`.)* Verified by executing real requests through each one:
+  - `82mlP2DDo7j1VGdC` "Azure Open AI account Entra ID" → `OAuth access token expired and no refresh token is available`. Execution #1619 on 2026-07-29T02:23 still completed a full AI analysis and created an event, so it lapsed after that. v1 and v2 share it, so **any real user message failed at the AI step** until it was reconnected.
+  - `CtgkMRzzV4whz91f` "Azure Open AI account" → `Unable to sign without access token`; authorisation was never completed. **Still broken.**
+  Every non-interactive repair path was tried and ruled out: `GET /credentials/{id}` exposes no `data`, so `clientId`/`clientSecret` are unreadable; the credential's `additionalBodyProperties` is `{"grant_type":"client_credentials"}` which would otherwise permit a silent token mint; `PATCH` is accepted (`PUT` is 405) but needs the same secret; and the n8n UI requires a sign-in. **Fix: n8n → Credentials → reconnect.**
+- **`Raindrop Knowledge Management` has a credential type mismatch.** Its `Azure AI 內容分析` node declares `azureOpenAiApi` for credential `CtgkMRzzV4whz91f`, which is actually `azureEntraCognitiveServicesOAuth2Api`; executing it raises `Credential with ID … does not exist for type "azureOpenAiApi"`. A second reason, besides the missing firecrawl package, that the workflow will fail if activated.
+- **`Normalize Error` misreports the failing stage.** Every failure is labelled 「讀取 Slack 對話」 regardless of where it happened; the observed failures were at `Call Azure OpenAI` and should have read 「呼叫 AI 解析」. Root cause: `reached()` and `pick()` both wrap `$('Node Name').first()`, which throws when evaluated inside a node reached via an error output. `Build Azure Payload` demonstrably ran in all three failures, yet `reached('Build Azure Payload')` returned false every time. Consequence worth prioritising once the credential is restored: `calendarWritten` is computed by the same broken mechanism, so a "calendar written but card failed" case would tell the user to retry — producing exactly the duplicate events the code comments (rd-json BLOCKING #4) say this safeguard exists to prevent.
+- **Slack redelivers events after downtime.** With both workflows deactivated, a message posted during the gap was still processed once a workflow was re-activated. Useful to know when planning cutovers: deactivating is not the same as dropping traffic.
+
+### Slack app
+- Manifest saved and reinstalled: the token now carries **all 30 requested scopes**. Because `token_rotation_enabled: false`, Slack reissued the same token value with updated scopes, so **the n8n credential kept working** — the token-rotation outage this changelog previously warned about did not occur.
+
+### Deployment
+- Deployed the **Slack to Google Calendar v2** rewrite to the n8n instance for the first time. It had been complete but undeployed because `V2-PROGRESS.md` recorded the n8n Public API as 401-blocked; that block is gone and the API now authenticates normally.
+  - Created as a **separate** workflow `RJiCNKlVQ4EhVyMS` — `Slack to Google Calendar AI Assistant (v2 TEST)`, `active: false`, 26 nodes / 40 connections. The v2 export's `id` is identical to production's, so a `PUT` would have destroyed the live workflow; it was created via `POST` with `id` omitted.
+  - Production `I2dch7ZKvBvX6GVC` verified untouched before and after: still `active`, `versionId` `e8f30411-…`, `updatedAt` unchanged.
+  - Authoritative n8n MCP `validate_workflow` (strict) against the deployed copy: `valid: true`, `errorCount: 0`, `invalidConnections: 0`, 26 nodes / 40 connections / 41 expressions / 23 warnings — matching the pre-deployment expectations recorded in `V2-PROGRESS.md` item for item.
+
+### Fixes
+- **v2 no longer depends on n8n variables**, which this instance's licence does not support (`GET /api/v1/variables` → 403 `feat:variables`). `$vars` is a defined but permanently empty object at runtime, so the dependency failed *silently* rather than loudly.
+  - `Collect Thread Context` now falls back to the real, non-secret Slack identifiers — `$vars.SLACK_APP_ID || 'A08LUAXNTD2'` and `$vars.SLACK_BOT_USER_ID || 'U08MEH30GSU'` — obtained from `auth.test` + `bots.info`. Without this the thread-participation guard, metadata-ownership filter, self-trigger guard and reaction fallback were all inert.
+  - `$vars` is kept first in the expression, so a future licence upgrade takes over automatically with no further workflow change.
+- **Isolated acceptance testing from the production calendar.** v2's hardcoded calendar fallback was `abc12207@gmail.com`, which is the calendar production v1 actually writes to, and `$vars.GCAL_ID` could not override it. A disposable calendar (`n8n v2 TEST (safe to delete)`, Asia/Taipei) was created and the **deployed** v2 TEST now points at it. The repo's `.v2.json` deliberately keeps the production calendar, since that is the eventual cutover configuration.
+
+### Corrections
+- `.github/copilot-instructions.md` claimed `N8N_BLOCK_ENV_ACCESS_IN_NODE` was unset and `$env` access was permitted. **This is false.** A probe Code node returns `ExpressionError: access to env vars denied`, and the block applies to expressions too.
+- **Discovered an unrelated live outage while verifying the above:** `Daily Currency Exchange Rate Alert` is `active` but **all 10 of its retained scheduled runs failed**, 2026-07-16 through 2026-07-29, every one with `access to env vars denied` at node `取得即時匯率` (URL `…/v6/{{$env.EXCHANGE_API_KEY}}/latest/TWD`). Fixing it requires moving the key into a credential, not restoring the environment variable. Not fixed in this change.
+- Recorded that `settings.binaryMode` is rejected by the Public API's OpenAPI schema but is behaviourally inert — `binary-helper-functions.ts` defaults the parameter to `BINARY_MODE_SEPARATE`, so "unset" and `"separate"` are equivalent.
+
+### Security
+- **The Slack webhook accepts forged events.** Verified by replaying Slack's `url_verification` handshake against the live n8n endpoint: a request carrying a *bogus* `x-slack-signature` still returned HTTP 200 and echoed the challenge. The n8n Slack credential has no Signing Secret set, and `SlackTriggerHelpers.ts` L118 (`skipIfNoExpectedSignature`) skips verification entirely in that case. Anyone who learns the webhook URL can inject fake Slack events and have the AI create calendar entries. Remediation (no reinstall required; the Signing Secret does not rotate): copy it from Slack → Basic Information → App Credentials into the `signatureSecret` field of credential `H8RWtu7aOphSXGk5` — confirmed a supported field on the `slackApi` credential schema. Not applied here, since only the user can read the value.
+- Noted while verifying: the HTTP 401 an unsigned probe receives is *not* signature enforcement. `verifySignature` returns false whenever `x-slack-request-timestamp` is missing (L91-94), before any secret is consulted.
+
+### Documentation
+- `V2-PROGRESS.md`: status changed from "尚未部署" to deployed-but-unaccepted, with the deployed id, the three deployment-time modifications and their evidence, and three pre-acceptance warnings (adding Slack scopes rotates the bot token and breaks v1 until the credential is updated; testing v2 requires deactivating v1 because they share a `webhookId`; the authorization boundary is channel membership).
+- `V2-IMPORT.md`: §1 marked complete; §2 corrected (see below); §3 documents the variables-licence workaround.
+- **Rewrote `slack-app-manifest-patch.yaml`.** Two errors were found in the old version by live-testing the workspace's actual token rather than re-reading the doc:
+  - It claimed five scopes were mandatory. In fact all four that v2 actually calls — `channels:history`, `chat:write`, `files:read`, `reactions:write` — are **already granted**; the token holds 22 scopes. v2 is not blocked on permissions.
+  - It claimed `metadata.message:read` was required to read back event ids. **Live round-trip proves otherwise**: writing `metadata` via `chat.postMessage` and reading it back via `conversations.replies?include_all_metadata=true` recovered the `event_id` intact without that scope. Slack's docs agree — the scope gates the *Events API* (`message_metadata_*` subscriptions), not the Web API read path v2 uses.
+  - **The serious problem the old file would have caused:** an App Manifest *replaces* the scope list rather than appending to it. The old file listed 16 scopes against the app's 22, so pasting it would have silently removed 10 live permissions (`files:write`, `app_mentions:read`, `users.profile:read`, `usergroups:*`, `channels:write.*`, `im:read`, `mpim:read`, `remote_files:read`).
+  - The file now contains the **union of currently-granted + v2's needs + plausible future needs: 30 scopes**, each name verified against Slack's scope reference, with the YAML parsed and checked so nothing granted is dropped. Goal is a single reinstall, never a second one.
+
 ## [1.0.4] - 2026-07-29
 ### Documentation
 - Rewrote **Slack to Google Calendar AI Assistant** documentation to match the exported workflow JSON:
