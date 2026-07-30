@@ -8,8 +8,8 @@
 |---|---|
 | 工作流程名稱 | `Slack to Google Calendar AI Assistant` |
 | 工作流程 ID | `I2dch7ZKvBvX6GVC` |
-| 節點數 / 連線數 | 34 / 48 |
-| Code 節點 | 8 |
+| 節點數 / 連線數 | 35 / 49 |
+| Code 節點 | 9 |
 | 狀態 | 啟用中 |
 | 時區 | `Asia/Taipei` |
 
@@ -74,8 +74,9 @@ Slack 訊息進來，先濾掉明顯不需要處理的，然後**立刻**加上 
 
 | 節點 | 型別 | onError | 輸出 |
 |---|---|---|---|
-| `Create Calendar Event` | `googleCalendar` v1.3 | continueErrorOutput | 0→Send Success Card<br>1→Normalize Error |
+| `Create Calendar Event` | `googleCalendar` v1.3 | continueErrorOutput | 0→Pair Created Event<br>1→Normalize Error |
 | `Update Calendar Event` | `googleCalendar` v1.3 | continueErrorOutput | 0→Send Updated Card<br>1→Normalize Error |
+| `Pair Created Event` | `code` v2 | — | 0→Send Success Card |
 
 ### Slack 卡片
 

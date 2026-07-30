@@ -8,8 +8,8 @@
 |---|---|
 | Workflow name | `Slack to Google Calendar AI Assistant` |
 | Workflow ID | `I2dch7ZKvBvX6GVC` |
-| Nodes / connections | 34 / 48 |
-| Code nodes | 8 |
+| Nodes / connections | 35 / 49 |
+| Code nodes | 9 |
 | State | active |
 | Timezone | `Asia/Taipei` |
 
@@ -74,8 +74,9 @@ Creation and update are separate nodes so an update can never accidentally creat
 
 | Node | Type | onError | Outputs |
 |---|---|---|---|
-| `Create Calendar Event` | `googleCalendar` v1.3 | continueErrorOutput | 0→Send Success Card<br>1→Normalize Error |
+| `Create Calendar Event` | `googleCalendar` v1.3 | continueErrorOutput | 0→Pair Created Event<br>1→Normalize Error |
 | `Update Calendar Event` | `googleCalendar` v1.3 | continueErrorOutput | 0→Send Updated Card<br>1→Normalize Error |
+| `Pair Created Event` | `code` v2 | — | 0→Send Success Card |
 
 ### Slack cards
 
