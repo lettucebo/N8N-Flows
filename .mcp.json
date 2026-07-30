@@ -9,12 +9,8 @@
       "url": "https://learn.microsoft.com/api/mcp"
     },
     "context7": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["@upstash/context7-mcp@1.0.31"],
-      "env": {
-        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY}"
-      }
+      "type": "http",
+      "url": "https://mcp.context7.com/mcp/oauth"
     },
     "n8n-mcp": {
       "type": "stdio",
