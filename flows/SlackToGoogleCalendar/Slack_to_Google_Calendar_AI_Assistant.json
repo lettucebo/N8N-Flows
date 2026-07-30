@@ -1,513 +1,1130 @@
-﻿{
+{
   "name": "Slack to Google Calendar AI Assistant",
   "nodes": [
     {
-      "credentials": {
-        "slackApi": {
-          "id": "H8RWtu7aOphSXGk5",
-          "name": "Slack account"
-        }
-      },
-      "id": "8c0ad7b0-a88c-4be8-9010-d45e3203e9c0",
+      "id": "trg-001",
       "name": "Slack Message Trigger",
+      "type": "n8n-nodes-base.slackTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        400
+      ],
+      "webhookId": "d8c9a4e7-f3d5-4c2a-9b8e-1234567890ab",
       "parameters": {
+        "trigger": [
+          "message"
+        ],
         "channelId": {
           "__rl": true,
           "mode": "id",
           "value": "C08NVUQUK8F"
         },
-        "options": {},
-        "trigger": [
-          "message"
-        ]
+        "options": {}
       },
-      "position": [
-        240,
-        464
-      ],
-      "type": "n8n-nodes-base.slackTrigger",
-      "typeVersion": 1,
-      "webhookId": "d8c9a4e7-f3d5-4c2a-9b8e-1234567890ab"
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
     },
     {
-      "id": "filter-slack-messages",
+      "id": "flt-002",
       "name": "Filter Valid Messages",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        200,
+        400
+      ],
       "parameters": {
         "conditions": {
           "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
           "conditions": [
             {
-              "id": "cond-channel",
+              "id": "c-ch",
               "leftValue": "={{ $json.channel }}",
+              "rightValue": "C08NVUQUK8F",
               "operator": {
-                "operation": "contains",
-                "type": "string"
-              },
-              "rightValue": "C08NVUQUK8F"
+                "type": "string",
+                "operation": "equals"
+              }
             },
             {
-              "id": "cond-type",
+              "id": "c-ty",
               "leftValue": "={{ $json.type }}",
+              "rightValue": "message",
               "operator": {
-                "operation": "equals",
-                "type": "string"
-              },
-              "rightValue": "message"
+                "type": "string",
+                "operation": "equals"
+              }
             },
             {
-              "id": "cond-bot",
+              "id": "c-bot",
               "leftValue": "={{ $json.bot_id }}",
+              "rightValue": "",
               "operator": {
+                "type": "string",
                 "operation": "empty",
-                "singleValue": true,
-                "type": "string"
-              },
-              "rightValue": ""
+                "singleValue": true
+              }
             },
             {
-              "id": "cond-subtype",
-              "leftValue": "={{ $json.subtype }}",
+              "id": "c-app",
+              "leftValue": "={{ $json.app_id }}",
+              "rightValue": "",
               "operator": {
+                "type": "string",
                 "operation": "empty",
-                "singleValue": true,
-                "type": "string"
-              },
-              "rightValue": ""
+                "singleValue": true
+              }
             },
             {
-              "id": "cond-thread",
-              "leftValue": "={{ $json.thread_ts }}",
+              "id": "c-sub",
+              "leftValue": "={{ [\"message\",\"file_share\"].includes($json.subtype || \"message\") }}",
+              "rightValue": "",
               "operator": {
-                "operation": "empty",
-                "singleValue": true,
-                "type": "string"
-              },
-              "rightValue": ""
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
-          ],
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "loose",
-            "version": 2
-          }
+          ]
         },
         "options": {}
-      },
-      "position": [
-        464,
-        464
-      ],
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3
+      }
     },
     {
-      "id": "3cc251c9-728f-417b-a80a-207290d6290e",
-      "name": "Parse AI Response",
-      "parameters": {
-        "jsCode": "// Parse AI Response\nconst inputData = $input.first();\nif (!inputData?.json) {\n  console.log('❌ 沒有輸入數據，停止執行');\n  return [{ json: { status: 'error', error: '沒有輸入數據' } }];\n}\n\nconst aiResponseText = inputData.json.text || inputData.json.output;\nif (!aiResponseText) {\n  console.log('❌ AI 沒有輸出文字，停止執行');\n  return [{ json: { status: 'error', error: 'AI 沒有輸出文字' } }];\n}\n\nlet aiOutput;\ntry {\n  const cleanResponse = aiResponseText.replace(/```json\\n?|```\\n?/g, '').trim();\n  aiOutput = JSON.parse(cleanResponse);\n} catch (error) {\n  console.log('❌ JSON 解析失敗:', error.message);\n  return [{ json: { status: 'error', error: `AI 回應解析失敗: ${error.message}`, rawResponse: aiResponseText, slackUser: 'unknown', slackChannel: 'unknown', slackTimestamp: Date.now().toString() } }];\n}\n\nlet slackData;\ntry {\n  slackData = $('Slack Message Trigger').first().json;\n} catch (error) {\n  console.log('⚠️ 取得 Slack 數據失敗:', error.message);\n  slackData = { text: '無法取得原始訊息', user: 'unknown', channel: 'unknown', ts: Date.now().toString() };\n}\n\nif (!aiOutput.hasEvent || !aiOutput.events || aiOutput.events.length === 0) {\n  console.log('ℹ️ AI 沒有找到事件');\n  return [{ json: { status: 'no_event', message: '未找到有效的日程信息', originalMessage: slackData.text, slackUser: slackData.user, slackChannel: slackData.channel, slackTimestamp: slackData.ts, reasoning: aiOutput.reasoning || '無法識別日程相關內容' } }];\n}\n\nconsole.log(`📅 找到 ${aiOutput.events.length} 個事件，開始處理`);\n\ntry {\n  const processedEvents = aiOutput.events.map((event, index) => {\n    if (!event.title || !event.startDateTime) {\n      console.log(`⚠️ 事件 ${index} 缺少必要欄位 (title=${event.title}, startDateTime=${event.startDateTime})，跳過`);\n      return null;\n    }\n    let startDateTime, endDateTime, isAllDay = false;\n    try {\n      const isAllDayEvent = event.isAllDay === true || (!event.startDateTime.includes('T') && !event.endDateTime.includes('T'));\n      if (isAllDayEvent) {\n        isAllDay = true;\n        startDateTime = event.startDateTime.includes('T') ? event.startDateTime.split('T')[0] : event.startDateTime;\n        endDateTime = event.endDateTime.includes('T') ? event.endDateTime.split('T')[0] : event.endDateTime;\n        if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(startDateTime)) throw new Error(`全天活動日期格式錯誤: ${startDateTime}`);\n        console.log(`✅ 事件 ${index} 全天活動: ${startDateTime}`);\n      } else {\n        const startDate = new Date(event.startDateTime);\n        const endDate = new Date(event.endDateTime);\n        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) throw new Error(`無效的日期時間格式: start=${event.startDateTime}, end=${event.endDateTime}`);\n        if (endDate <= startDate) endDate.setTime(startDate.getTime() + 3600000);\n        startDateTime = startDate.toISOString();\n        endDateTime = endDate.toISOString();\n        console.log(`✅ 事件 ${index} 定時活動: ${startDateTime} ~ ${endDateTime}`);\n      }\n    } catch (dateError) {\n      console.log(`⚠️ 事件 ${index} 時間處理失敗: ${dateError.message}，使用明天作為預設`);\n      const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1);\n      const dateStr = tomorrow.toISOString().split('T')[0];\n      startDateTime = dateStr; endDateTime = dateStr; isAllDay = true;\n    }\n    const attendees = (event.attendees || []).filter(e => e?.includes('@') && e.includes('.'));\n    const confidence = parseFloat(event.confidence) || 0.5;\n    const description = [event.description || '', '', '📋 來源信息：', `• Slack 訊息: ${slackData.text}`, `• 發送者: <@${slackData.user}>`, `• 頻道: <#${slackData.channel}>`, `• 活動類型: ${isAllDay ? '📅 全天活動' : '⏰ 部分時間活動'}`, `• AI 分析信心度: ${Math.round(confidence * 100)}%`, aiOutput.reasoning ? `• 分析說明: ${aiOutput.reasoning}` : ''].filter(line => line !== '').join('\\n');\n    return { json: { eventIndex: index, title: event.title, description, startDateTime, endDateTime, isAllDay, location: event.location || '', attendees, confidence, confidenceDisplay: `${Math.round(confidence * 100)}%`, reasoning: aiOutput.reasoning || '', originalMessage: slackData.text, slackUser: slackData.user, slackChannel: slackData.channel, slackTimestamp: slackData.ts, status: confidence >= 0.7 ? 'high_confidence' : 'low_confidence' } };\n  }).filter(event => event !== null);\n  if (processedEvents.length === 0) {\n    console.log('⚠️ 所有事件都無效，回傳 no_event');\n    return [{ json: { status: 'no_event', message: '所有事件都無效', originalMessage: slackData.text, slackUser: slackData.user, slackChannel: slackData.channel, slackTimestamp: slackData.ts, reasoning: aiOutput.reasoning || '' } }];\n  }\n  console.log(`🎉 成功處理 ${processedEvents.length} 個事件`);\n  return processedEvents;\n} catch (error) {\n  console.log('❌ 處理事件時發生未預期錯誤:', error.message, error.stack);\n  return [{ json: { status: 'error', error: `處理失敗: ${error.message}`, originalMessage: slackData?.text || 'unknown', slackUser: slackData?.user || 'unknown', slackChannel: slackData?.channel || 'unknown', slackTimestamp: slackData?.ts || Date.now().toString() } }];\n}",
-        "mode": "runOnceForAllItems"
-      },
+      "id": "http-003",
+      "name": "Fetch Thread Replies",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
-        1056,
-        464
+        400,
+        400
       ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "method": "GET",
+        "url": "https://slack.com/api/conversations.replies",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $json.channel }}"
+            },
+            {
+              "name": "ts",
+              "value": "={{ $json.thread_ts || $json.ts }}"
+            },
+            {
+              "name": "include_all_metadata",
+              "value": "true"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "code-004",
+      "name": "Collect Thread Context",
       "type": "n8n-nodes-base.code",
-      "typeVersion": 2
+      "typeVersion": 2,
+      "position": [
+        600,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// ============================================================\r\n// n8n Code node: \"Collect Thread Context\"\r\n// mode: runOnceForAllItems\r\n// 直接可貼進 n8n。回傳契約：[{ json: {...} }]\r\n// ------------------------------------------------------------\r\n// 修正來源：\r\n//   council-impl : 測試碼與實作混雜／腳本結束呼叫／未回傳 [{json}] 契約／\r\n//                  未知附件靜默預設／未驗 ok／未驗 app_id／未處理分頁／null 處理\r\n//   rd-design N-4: ✅ reaction fallback 需驗證反應者為 bot，否則人為可污染\r\n//   rd-design N-5: bot 自觸發防護（含 message_changed 的巢狀結構）\r\n//   rd-design B-2: alreadyCreated -> isDuplicate（比對 start+title），\r\n//                  允許同 thread 建立不同事件\r\n// ============================================================\r\n\r\nconst BOT_APP_ID = $vars.SLACK_APP_ID || 'A08LUAXNTD2';   // metadata ownership 與 bot 自我辨識。本 instance 授權不支援 variables（GET /api/v1/variables 回 403 feat:variables），$vars 執行期為空物件，故內嵌實測值作為 fallback；日後若啟用 variables 會自動改走 $vars\r\nconst BOT_USER_ID = $vars.SLACK_BOT_USER_ID || 'U08MEH30GSU';   // 同上。值取自 auth.test：bot n8n2 @ team Money\r\n\r\n// 舊卡片 metadata 缺 calendar_id 時的退路。必須是 email 形式（見下方 calendarId 註解）。\r\n// 這個 regex 與 Parse AI Response 的 pickCalendarId() 必須一致：刻意收斂成 n8n\r\n// Google Calendar 節點 extractValue regex 的真子集（CalendarDescription.ts L65-68），\r\n// 並補上 $ 錨點——Google 那條沒有錨點，'a@b@x.com' 會被靜默截斷成 'a@b'。\r\nconst CALENDAR_ID_OK = /^[A-Za-z0-9.!#$%&*+/=?^_{|}~-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+$/;\r\nconst CALENDAR_FALLBACK = ($vars.GCAL_ID && CALENDAR_ID_OK.test(String($vars.GCAL_ID).trim()))\r\n  ? String($vars.GCAL_ID).trim()\r\n  : 'abc12207@gmail.com';\r\nif ($vars.GCAL_ID && CALENDAR_FALLBACK === 'abc12207@gmail.com') {\r\n  console.log(\r\n    '[Collect Thread Context] $vars.GCAL_ID 不是合法的 Google 日曆 ID，已退回預設日曆。'\r\n    + ' 收到的值=' + JSON.stringify(String($vars.GCAL_ID))\r\n  );\r\n}\r\n\r\nfunction fail(code, detail) {\r\n  const e = new Error(`[${code}] ${detail}`);\r\n  e.code = code;\r\n  throw e;\r\n}\r\n\r\n// --- 1. 取出觸發訊息，處理 message_changed 的巢狀結構（N-5） ---\r\nconst trigger = $('Slack Message Trigger').first().json;\r\nconst evt = trigger.event || trigger;\r\nconst inner = evt.subtype === 'message_changed' ? (evt.message || {}) : evt;\r\n\r\nconst threadTs = inner.thread_ts || inner.ts || evt.thread_ts || evt.ts;\r\nconst channel = evt.channel || trigger.channel;\r\nif (!threadTs) fail('E_NO_THREAD_TS', 'event 內找不到 thread_ts/ts');\r\nif (!channel) fail('E_NO_CHANNEL', 'event 內找不到 channel');\r\n\r\n// bot 自觸發防護：明確拒絕，不靠 subtype 白名單（N-5）\r\nif (inner.bot_id || inner.app_id || (BOT_USER_ID && inner.user === BOT_USER_ID)) {\r\n  return [{ json: { skip: true, skipReason: 'bot 自身訊息，避免無限迴圈', threadTs, channel } }];\r\n}\r\n\r\n// --- 2. 讀 thread（含 metadata），驗證 Slack 回應 ---\r\nconst replies = $('Fetch Thread Replies').first().json;\r\nif (!replies || replies.ok !== true) {\r\n  fail('E_SLACK_NOT_OK', `conversations.replies 失敗: ${replies && replies.error ? replies.error : 'ok!==true'}`);\r\n}\r\nconst messages = Array.isArray(replies.messages) ? replies.messages : [];\r\nif (messages.length === 0) fail('E_EMPTY_THREAD', 'conversations.replies 回傳空 messages');\r\n// 分頁：thread 過長時後續訊息不在本頁，明確標記而非靜默截斷（council-impl）\r\nconst truncated = replies.has_more === true || !!(replies.response_metadata && replies.response_metadata.next_cursor);\r\n\r\n// --- 3. thread 發起人（N4 ownership） ---\r\nconst parent = messages[0] || {};\r\nconst threadOwner = parent.user || null;\r\nif (!threadOwner) fail('E_NO_THREAD_OWNER', 'thread 首則訊息無 user 欄位');\r\nconst currentUser = inner.user || null;\r\nconst isOwner = !!currentUser && currentUser === threadOwner;\r\n\r\n// --- 4. 既有事件：只認我方 app 寫入的 metadata（B4 主判定） ---\r\n//     app_id 必須相符，否則他人 app 可偽造（council-impl）\r\n//\r\n// 同一個 thread 可能建立過多個事件（B-2 允許）。這裡同時輸出兩種形式：\r\n//   existingEvent — 最後（最近）一筆，供「改成…」這類 update 使用；\r\n//                   使用者說「改時間」時指的幾乎必然是最近建立的那個。\r\n//   allEvents     — 全部，供重複判定使用。\r\n// 先前只保留最後一筆，導致 thread 裡先建 A 再建 B 之後，使用者若再講一次 A，\r\n// 重複比對只會拿 B 去比而判定不重複，於是 A 被重覆寫進日曆。\r\n//\r\n// ★ 必須以 eventId 去重，只保留最新版本。Send Updated Card 更新後也會寫一張\r\n//   新的 metadata（同一個 event_id、不同的 start），若把每張 metadata 都當成\r\n//   一個仍然存在的事件，同一事件的「歷史版本」就會留在 allEvents 裡：\r\n//   把事件從 09:00 改到 11:00 之後，使用者再建立一個真正新的 09:00 事件，\r\n//   會被那筆早已不存在的 09:00 舊版本判定為重複而擋掉。\r\n//   messages 依時間由舊到新，所以同 ID 後寫入者即為最新版本。\r\nlet existingEvent = null;\r\nconst eventsById = new Map();\r\nlet metadataReadable = false;\r\nfor (const m of messages) {\r\n  const md = m.metadata;\r\n  if (!md || md.event_type !== 'gcal_event_created') continue;\r\n  metadataReadable = true;\r\n  const p = md.event_payload || {};\r\n  if (!p.event_id) continue;\r\n  if (BOT_APP_ID && m.app_id && m.app_id !== BOT_APP_ID) continue;  // 非我方寫入，忽略\r\n  existingEvent = {\r\n    eventId: p.event_id,\r\n    // 舊卡片可能沒有 calendar_id。這裡不可用字面 'primary' 當預設值 ——\r\n    // 下游 Google Calendar 節點的 calendar 走 mode:'id'，n8n 2.32.5 的\r\n    // extract-value.ts L46-50 對比不到 email 形式的值會直接 throw\r\n    // WorkflowOperationError，該次更新就失敗了。\r\n    // 帳號 primary 日曆的真實 ID 本來就是它的 email，所以改用 email 語義等價且安全。\r\n    // 下游 Parse AI Response 的 pickCalendarId() 還有第二道過濾。\r\n    calendarId: p.calendar_id || CALENDAR_FALLBACK,\r\n    start: p.start || null,\r\n    title: p.title || null,\r\n    messageTs: m.ts,\r\n  };\r\n  eventsById.set(existingEvent.eventId, existingEvent);\r\n}\r\nconst allEvents = Array.from(eventsById.values());\r\n\r\n// --- 5. ✅ reaction 備援：必須確認反應者為 bot 本身（rd-design N-4） ---\r\n//     若無法確認（缺 BOT_USER_ID），則不使用此備援，而不是預設為真\r\nlet reactionFallback = false;\r\nif (!existingEvent && BOT_USER_ID) {\r\n  const reactions = Array.isArray(parent.reactions) ? parent.reactions : [];\r\n  reactionFallback = reactions.some(r =>\r\n    r && r.name === 'white_check_mark' && Array.isArray(r.users) && r.users.includes(BOT_USER_ID));\r\n}\r\n\r\n// --- 6. 附件分類 ---\r\n//     收集範圍是「整個 thread」而非只有觸發訊息：\r\n//     Azure OpenAI 每一輪都是全新的無狀態呼叫，只看得到我們當次送進去的內容。\r\n//     澄清第二輪若不重送原圖，AI 就完全失去圖片脈絡，\r\n//     使用者「傳圖 → bot 問年份 → 使用者補年份」的流程會在第二輪退化成純文字。\r\n//     依 file id 去重避免同一張圖重複送出，並設上限控制 vision token 成本。\r\nconst IMAGE_MIME = /^image\\/(png|jpe?g|gif|webp|bmp)$/i;\r\nconst MAX_THREAD_IMAGES = 4;\r\n\r\n// 觸發訊息的檔案排最前面（本次新增的最相關），其餘依 thread 時序補齊\r\nconst ownFiles = Array.isArray(inner.files) ? inner.files : [];\r\nconst threadFiles = [];\r\nfor (const m of messages) {\r\n  if (!m || !Array.isArray(m.files)) continue;\r\n  if (String(m.ts || '') === String(inner.ts || '')) continue; // 觸發訊息已在 ownFiles\r\n  for (const f of m.files) threadFiles.push(f);\r\n}\r\nconst rawFiles = ownFiles.concat(threadFiles);\r\n\r\nconst images = [];\r\nconst rejected = [];\r\nconst seenIds = new Set();\r\nfor (const f of rawFiles) {\r\n  if (!f || typeof f !== 'object') { rejected.push({ reason: 'R_MALFORMED', file: null }); continue; }\r\n  const mime = f.mimetype || '';\r\n  const entry = { id: f.id || null, name: f.name || null, mimetype: mime, size: f.size ?? null,\r\n                  urlPrivate: f.url_private || null };\r\n  const dedupKey = f.id || f.url_private || null;\r\n  if (dedupKey && seenIds.has(dedupKey)) continue;\r\n  if (dedupKey) seenIds.add(dedupKey);\r\n  if (!f.url_private) { rejected.push({ ...entry, reason: 'R_NO_URL' }); continue; }\r\n  if (f.mode === 'tombstone' || f.file_access === 'check_file_info') {\r\n    rejected.push({ ...entry, reason: 'R_INACCESSIBLE' }); continue;\r\n  }\r\n  if (IMAGE_MIME.test(mime)) {\r\n    if (images.length < MAX_THREAD_IMAGES) images.push(entry);\r\n    else rejected.push({ ...entry, reason: 'R_TOO_MANY' });\r\n  } else rejected.push({ ...entry, reason: 'R_UNSUPPORTED_TYPE' });\r\n}\r\n\r\n// --- 6.5 本 app 參與判定：thread 回覆若與本 app 無關，不得介入他人討論串 ---\r\n//     新開的根訊息不受限（那是使用者主動對 bot 說話）。\r\n//     thread 回覆需滿足其一才處理：\r\n//       (a) 本 app 曾在該 thread 發言／建立過事件／加過 ✅\r\n//       (b) 回覆者就是 thread 發起人（在自己開的串裡補充，語意上是對 bot 說話）\r\n//     (b) 是必要的：使用者常在 bot 回應前就補一句，若無此條該補充會靜默遺失。\r\n//     誤觸成本僅為一個 ➖ reaction（會被 suppress），遠低於漏處理造成的功能失效。\r\n//     BOT_APP_ID 未設定時無法判定，採放行以免功能整體失效。\r\nconst isThreadReply = !!(inner.thread_ts && inner.ts && inner.thread_ts !== inner.ts);\r\nif (isThreadReply && BOT_APP_ID) {\r\n  const appInvolved = messages.some(m => m && m.app_id === BOT_APP_ID)\r\n    || !!existingEvent || reactionFallback;\r\n  if (!appInvolved && !isOwner) {\r\n    return [{ json: {\r\n      skip: true,\r\n      skipReason: '本 app 未參與過此執行緒（thread not involved），且回覆者非發起人，不介入一般討論',\r\n      threadTs, channel,\r\n    } }];\r\n  }\r\n}\r\n\r\n// --- 7. 對話輪次與最新使用者訊息（forceCreate 只依最新一則判定） ---\r\n// 純圖片訊息的 text 為空字串（falsy），不可用 `&& m.text` 過濾，否則整則會消失，\r\n// 導致 round 少算、latestUserMessage 誤抓上一句、模型不知道使用者傳了新圖。\r\nconst fileCount = (m) => (Array.isArray(m.files) ? m.files.filter(Boolean).length : 0);\r\nconst imageFileCount = (m) => (Array.isArray(m.files)\r\n  ? m.files.filter(f => f && IMAGE_MIME.test(String(f.mimetype || ''))).length\r\n  : 0);\r\nconst hasContent = (m) => !!(String(m.text || '').trim() || fileCount(m));\r\n\r\nconst userMessages = messages.filter(m => m && !m.bot_id && !m.app_id && hasContent(m));\r\nconst round = userMessages.length;\r\n// latestUserMessage 必須取「觸發本次執行的那一則」，不能取 thread 歷史的最後一則。\r\n// Slack 官方文件（docs.slack.dev/reference/methods/conversations.replies）明載\r\n// 「The earliest messages in the time range are returned first」—— limit=100 取的是\r\n// 最舊的 100 筆。thread 一旦超過 100 則，觸發訊息根本不在 messages 裡，\r\n// 於是 forceCreate 會拿一則陳年舊訊息去比對，使用者說幾次「就這樣建立」都不會被認得，\r\n// 而那正是他唯一的脫困路徑。改讀 trigger 的訊息本身，就不必依賴 Slack 的回傳排序。\r\n// （同一份文件另載：2025-05-29 之後新建的非 Marketplace app，limit 上限已降到 15，\r\n//   代表截斷會遠比想像中頻繁 —— 更不能把脫困機制建立在 thread 歷史上。）\r\n// 純圖片訊息的 text 是空字串，此時刻意「不」退回 thread 前一則：\r\n// 退回去會抓到上一句話，讓 forceCreate 誤觸（這正是下方 hasContent 註解要避免的事）。\r\nconst latestUserMessage = String(inner.text || '');\r\n\r\n// --- 8. thread 文字脈絡（供模型理解澄清歷程） ---\r\n// 以「內容是否為空」判斷，不可用組合後字串長度 —— '[user] ' 本身就有 7 個字元，\r\n// 用 length > 7 會同時誤殺純圖片訊息與單字元回覆。\r\n// 每則訊息附上自身的台北時間：thread 可能跨數日，若不標時間，\r\n// 模型會用「本次執行時間」重新解讀歷史訊息裡的「下週三」，造成靜默的日期錯誤。\r\nconst tpeStamp = (ts) => {\r\n  const sec = Number(String(ts || '').split('.')[0]);\r\n  if (!Number.isFinite(sec) || sec <= 0) return '';\r\n  const d = new Date(sec * 1000);\r\n  const p = new Intl.DateTimeFormat('en-CA', {\r\n    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',\r\n    hour: '2-digit', minute: '2-digit', hour12: false,\r\n  }).formatToParts(d).reduce((a, x) => (a[x.type] = x.value, a), {});\r\n  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}`;\r\n};\r\n\r\nconst threadText = messages\r\n  .map((m) => {\r\n    if (!m) return '';\r\n    const who = m.bot_id || m.app_id ? '[bot]' : '[user]';\r\n    const txt = String(m.text || '').trim();\r\n    const nImg = imageFileCount(m);\r\n    const nOther = fileCount(m) - nImg;\r\n    const tags = [];\r\n    if (nImg) tags.push(`附 ${nImg} 張圖片`);\r\n    if (nOther) tags.push(`附 ${nOther} 個附件`);\r\n    const tag = tags.length ? `（${tags.join('、')}）` : '';\r\n    if (!txt && !tag) return '';\r\n    const when = tpeStamp(m.ts);\r\n    return `${who}${when ? ` (${when})` : ''} ${txt}${tag}`;\r\n  })\r\n  .filter(Boolean)\r\n  .join('\\n');\r\n\r\nreturn [{\r\n  json: {\r\n    skip: false,\r\n    channel,\r\n    threadTs,\r\n    threadOwner,\r\n    currentUser,\r\n    isOwner,\r\n    round,\r\n    latestUserMessage,\r\n    threadText,\r\n    images,\r\n    imageCount: images.length,\r\n    rejectedFiles: rejected,\r\n    existingEvent,\r\n    allEvents,\r\n    hasExistingEvent: !!existingEvent,\r\n    metadataReadable,\r\n    reactionFallback,\r\n    threadTruncated: truncated,\r\n    botAppIdConfigured: !!BOT_APP_ID,\r\n    botUserIdConfigured: !!BOT_USER_ID,\r\n  },\r\n}];\r\n"
+      }
     },
     {
-      "id": "has-valid-event",
-      "name": "Has Valid Event",
+      "id": "if-005",
+      "name": "Should Process",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        400
+      ],
       "parameters": {
         "conditions": {
           "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
           "conditions": [
             {
-              "id": "cond-has-event",
-              "leftValue": "={{ $json.status }}",
+              "id": "c-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": "false",
               "operator": {
-                "operation": "notEquals",
-                "type": "string"
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "if-006",
+      "name": "Has Images",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1000,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "combinator": "and",
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c-img",
+              "leftValue": "={{ $json.imageCount }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "code-007",
+      "name": "Split Images",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const ctx = $input.first().json;\nconst out = (ctx.images || []).map(img => ({ json: { ...img, _ctx: ctx } }));\nreturn out;"
+      }
+    },
+    {
+      "id": "http-008",
+      "name": "Download Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.urlPrivate }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "agg-009",
+      "name": "Aggregate Images",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        300
+      ],
+      "parameters": {
+        "aggregate": "aggregateAllItemData",
+        "options": {
+          "includeBinaries": true
+        }
+      }
+    },
+    {
+      "id": "code-010",
+      "name": "Build Azure Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// B1: 日期基準必須在此以 JS 求值後內嵌。\n// 切勿改用 n8n 運算式的 DateTime.now() —— 那在 Code node 內不會被求值，會變成字面字串。\nconst ctx = $('Collect Thread Context').first().json;\n\nconst nowTaipei = new Intl.DateTimeFormat('zh-TW', {\n  timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',\n  hour: '2-digit', minute: '2-digit', weekday: 'long', hour12: false,\n}).format(new Date());\nconst todayISO = new Intl.DateTimeFormat('en-CA', {\n  timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',\n}).format(new Date());\n\nconst systemPrompt = [\n  '你是行事曆助理，負責從 Slack 訊息（可能含圖片）中擷取行程資訊。',\n  '',\n  '## 時間基準（唯一可信來源，不得使用你自己的內部時鐘）',\n  `現在時間：${nowTaipei}（Asia/Taipei）`,\n  `今天日期：${todayISO}`,\n  '「## 本次訊息」裡的相對日期（今天／明天／下週三／這個月底）以上述現在時間計算。',\n  '「## 對話脈絡」裡的每一則歷史訊息都帶有自己的 (YYYY-MM-DD HH:mm) 前綴，',\n  '該則訊息中的相對日期一律以**它自己的前綴時間**為基準，不是以現在時間。',\n  '例：thread 在 2026-07-20 說「下週三開會」，即使今天是 2026-08-10，那仍指 2026-07-22 那一週的週三。',\n  '這條規則的目的是避免舊 thread 被重新開啟時，歷史訊息的日期被整批平移到今天。',\n  '',\n  '## 年份規則',\n  '若訊息只給月/日未給年份，直接輸出你判斷的年份即可；系統會另行以確定性規則校正，你不需要猜測。',\n  '',\n  '## 輸出格式（僅輸出 JSON，不要 markdown 圍欄）',\n  '{',\n  '  \"hasEvent\": boolean,',\n  '  \"intent\": \"create\" | \"update\",',\n  '  \"confidence\": 0.0-1.0,',\n  '  \"events\": [{',\n  '    \"title\": string, \"startDateTime\": \"YYYY-MM-DD\" 或 \"YYYY-MM-DDTHH:mm:ss+08:00\",',\n  '    \"endDateTime\": 同上（**必填**）, \"isAllDay\": boolean,',\n  '    \"location\": string, \"description\": string',\n  '  }],',\n  '  \"imageTranscript\": string,',\n  '  \"reasoning\": string',\n  '}',\n  '',\n  '## 重要',\n  '- 全天事件用 \"YYYY-MM-DD\"，isAllDay=true；endDateTime 填最後一天（含），不要自行加一天',\n  '- **endDateTime 一律要填**。使用者沒說結束時間時，依常識估一個合理時長（一般會議 1 小時、餐敘 2 小時、健檢半天）',\n  '- 若訊息含圖片，imageTranscript 必須逐字列出你從圖片讀到的關鍵文字（供使用者核對 OCR 是否誤讀）',\n  '- 若使用者是在修改既有事件（「改成三點」「地點換到 B 棟」），intent 設為 \"update\"',\n  '- 信心不足時如實給低分，不要為了通過而灌高',\n  '- 只要訊息在講一件「有時間點的事」就把 hasEvent 設為 true，即使資訊不全；',\n  '  資訊不全請用低 confidence 表達，不要把 hasEvent 設為 false（那會被當成閒聊而不回應使用者）',\n].join('\\n');\n\nconst content = [{ type: 'text', text:\n  ['## 對話脈絡', ctx.threadText || '(無)', '', '## 本次訊息', ctx.latestUserMessage || '(無文字)'].join('\\n') }];\n\n// 圖片（若有）\n// Download Image 設 continueRegularOutput，失敗的 item 會帶著 { error: msg } 流下來、沒有 binary。\n// 若只掃 binary 而不比對數量，下載失敗就會被當成「這則訊息本來就沒圖」，\n// 使用者看到的是一張看似正常的澄清卡片，完全不知道他貼的圖從來沒被讀過（rd-json BLOCKING #3）。\n// 因此這裡明確追蹤三種失敗：下載失敗、格式不受支援、超過大小上限。\nconst AZURE_VISION_MAX_BYTES = 20 * 1024 * 1024;\nconst AZURE_VISION_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];\nlet imgs = [];\ntry { imgs = $('Aggregate Images').all(); } catch (e) { imgs = []; }\n\nconst expectedImages = Array.isArray(ctx.images) ? ctx.images.length : 0;\nconst downloadFailures = [];\nlet attached = 0;\n\nfor (const item of imgs) {\n  if (item.json && item.json.error) {\n    downloadFailures.push({ reason: 'R_DOWNLOAD_FAILED', detail: String(item.json.error).slice(0, 120) });\n    continue;\n  }\n  const bin = item.binary || {};\n  for (const key of Object.keys(bin)) {\n    const b = bin[key];\n    if (!b || !b.mimeType) continue;\n    const mime = String(b.mimeType).toLowerCase().split(';')[0].trim();\n    // Azure OpenAI vision 不接受 BMP/TIFF/SVG 等格式；送出去只會拿到 400，\n    // 而且錯誤訊息不會告訴使用者是哪張圖有問題，所以在這裡先擋掉並記錄原因。\n    if (AZURE_VISION_MIME.indexOf(mime) === -1) {\n      downloadFailures.push({ reason: 'R_UNSUPPORTED_TYPE', detail: mime });\n      continue;\n    }\n    const buf = await this.helpers.getBinaryDataBuffer(item.index ?? 0, key);\n    if (buf.length > AZURE_VISION_MAX_BYTES) {\n      downloadFailures.push({ reason: 'R_TOO_LARGE', detail: Math.round(buf.length / 1048576) + 'MB' });\n      continue;\n    }\n    content.push({ type: 'image_url',\n      image_url: { url: `data:${mime};base64,${buf.toString('base64')}` } });\n    attached++;\n  }\n}\n\n// 預期有圖但一張都沒送成功時，讓使用者知道 —— 這比讓 AI 在沒有圖的情況下亂猜好得多。\nif (expectedImages > 0 && attached < expectedImages) {\n  const missing = expectedImages - attached;\n  for (let i = downloadFailures.length; i < missing; i++) {\n    downloadFailures.push({ reason: 'R_DOWNLOAD_FAILED', detail: 'no binary returned' });\n  }\n}\n\n// 併入 ctx.rejectedFiles，讓卡片的既有告知機制自動涵蓋這些新原因，不必再改卡片。\nconst ctxOut = Object.assign({}, ctx, {\n  rejectedFiles: (ctx.rejectedFiles || []).concat(downloadFailures),\n  imagesAttached: attached,\n  imagesExpected: expectedImages,\n});\n\n// 輸出改為餵給 Basic LLM Chain（chainLlm）+ Azure OpenAI Chat Model，而不是自己組\n// Azure REST 請求。原因是 httpRequest 走 n8n 泛用 OAuth2 helper，只會沿用既有 token\n// 並嘗試 refresh；本 Entra 憑證以 client_credentials 換 token、不會發 refresh_token，\n// 所以 token 一過期就永久失敗。LangChain 節點自行取得 token，不受此限。\n//\n// chainLlm 的圖片槽位是靜態設定，空字串會讓節點直接失效，因此固定送四槽，\n// 不足的用 1x1 透明 PNG 補位，並在 system prompt 明確要求忽略空白佔位圖。\nconst BLANK_IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABAQAAAAA3bvkkAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';\nconst imageUrls = content\n  .filter(c => c && c.type === 'image_url' && c.image_url && c.image_url.url)\n  .map(c => c.image_url.url);\nconst userText = content\n  .filter(c => c && c.type === 'text' && c.text)\n  .map(c => c.text)\n  .join('\\n\\n');\nconst slots = [0, 1, 2, 3].map(i => imageUrls[i] || BLANK_IMAGE);\n\nconst systemPromptForChain = systemPrompt\n  + '\\n\\n## 圖片附件說明\\n'\n  + '本次一律附上四張圖片，其中可能包含 1x1 的空白佔位圖。'\n  + '請完全忽略空白佔位圖，不要因此認為使用者傳了多張圖片，也不要對它們做任何推論。'\n  + '實際有內容的圖片數量為 ' + imageUrls.length + ' 張。';\n\nreturn [{ json: {\n  _ctx: ctxOut,\n  systemPrompt: systemPromptForChain,\n  userText,\n  imagesAttached: imageUrls.length,\n  img1: slots[0], img2: slots[1], img3: slots[2], img4: slots[3],\n} }];"
+      }
+    },
+    {
+      "id": "code-012",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// NEW-1 v3：年份消歧（最終版）\r\n// 設計轉向：不再「靜默修正」年份，改為三態判定。\r\n//   PASS      信任模型日期\r\n//   CORRECTED 確定性修正（僅限模型日期在過去、訊息無過去語意、且可推導下一個發生日）\r\n//   AMBIGUOUS 無法確定 -> 強制走 clarify，由使用者確認（卡片附建議值）\r\n// 理由：rd-design B-4 證明靜默修正會把「模型本來正確的過去日期」改壞，\r\n//       屬 §3.5.2 同型的靜默錯誤。問一次遠比默默建錯事件安全。\r\n\r\nconst CN_NUM = { 一:1,二:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10,兩:2,〇:0,零:0 };\r\n\r\nfunction cnToNum(s) {\r\n  if (!s) return NaN;\r\n  if (/^\\d+$/.test(s)) return Number(s);\r\n  // 支援 一~三十一：十/十X/X十/X十X\r\n  if (s === '十') return 10;\r\n  let m = s.match(/^(.)?十(.)?$/);\r\n  if (m) {\r\n    const tens = m[1] ? (CN_NUM[m[1]] ?? NaN) : 1;\r\n    const ones = m[2] ? (CN_NUM[m[2]] ?? NaN) : 0;\r\n    return Number.isNaN(tens) || Number.isNaN(ones) ? NaN : tens * 10 + ones;\r\n  }\r\n  return CN_NUM[s] ?? NaN;\r\n}\r\n\r\nfunction todayTaipei(now = new Date()) {\r\n  return new Intl.DateTimeFormat('en-CA', {\r\n    timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',\r\n  }).format(now);\r\n}\r\n\r\nfunction normalize(s) {\r\n  if (typeof s !== 'string') return '';\r\n  return s\r\n    .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))\r\n    .replace(/[／⁄]/g, '/')\r\n    .replace(/[－–—]/g, '-');\r\n}\r\n\r\nconst PAST_HINT = /昨天|昨日|前天|上週|上周|上星期|上個月|上个月|去年|前年|之前|剛剛|剛才|補記錄|補登|記錄一下|會議記錄|紀錄一下|已經/;\r\n\r\n// 年份只在「日期語境」中才算數：緊鄰「年」，或 ISO/斜線日期的年份位\r\nconst YEAR_CTX = /(?<!\\d)(1[89]\\d{2}|20\\d{2}|21\\d{2})\\s*年|(?<!\\d)(1[89]\\d{2}|20\\d{2}|21\\d{2})[\\/\\-]\\d{1,2}[\\/\\-]\\d{1,2}(?!\\d)/;\r\n// 阿拉伯數字月/日\r\nconst MD_NUM = /(?<!\\d)(\\d{1,2})\\s*[\\/\\-]\\s*(\\d{1,2})(?!\\d)(?!\\s*:)|(?<!\\d)(\\d{1,2})\\s*月\\s*(\\d{1,2})\\s*日?/;\r\n// 中文數字月/日\r\nconst MD_CN = /([一二三四五六七八九十兩]{1,3})\\s*月\\s*([一二三四五六七八九十兩]{1,3})\\s*日?/;\r\n// 時間樣式（用來排除 15:30-16:00 這類被誤認為月/日的片段）\r\nconst TIME_RANGE = /\\d{1,2}\\s*:\\s*\\d{2}/;\r\n\r\nfunction isRealDate(y, m, d) {\r\n  const dt = new Date(Date.UTC(y, m - 1, d));\r\n  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;\r\n}\r\n\r\nfunction nextOccurrence(month, day, todayStr) {\r\n  const startY = Number(todayStr.slice(0, 4));\r\n  for (let y = startY; y <= startY + 8; y++) {\r\n    if (!isRealDate(y, month, day)) continue;\r\n    const s = `${y}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;\r\n    if (s >= todayStr) return s;\r\n  }\r\n  return null;\r\n}\r\n\r\nfunction splitDate(dateStr) {\r\n  const s = String(dateStr).trim();\r\n  const m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})(T.*)?$/);\r\n  if (!m) return { ok: false };\r\n  return { ok: true, y: +m[1], m: +m[2], d: +m[3], rest: m[4] || '' };\r\n}\r\n\r\nfunction extractMonthDay(text) {\r\n  // 先移除時間樣式，避免 15:30-16:00 被讀成 30-16\r\n  const cleaned = text.replace(/\\d{1,2}\\s*:\\s*\\d{2}/g, ' ');\r\n  let m = cleaned.match(MD_NUM);\r\n  if (m) {\r\n    const mo = Number(m[1] ?? m[3]), d = Number(m[2] ?? m[4]);\r\n    if (isRealDate(2024, mo, d)) return { month: mo, day: d, src: 'arabic' };\r\n    return null;\r\n  }\r\n  m = cleaned.match(MD_CN);\r\n  if (m) {\r\n    const mo = cnToNum(m[1]), d = cnToNum(m[2]);\r\n    if (!Number.isNaN(mo) && !Number.isNaN(d) && isRealDate(2024, mo, d)) {\r\n      return { month: mo, day: d, src: 'chinese' };\r\n    }\r\n  }\r\n  return null;\r\n}\r\n\r\n/**\r\n * @returns {{status:'PASS'|'CORRECTED'|'AMBIGUOUS', value:string, suggestion:string|null, reason:string}}\r\n */\r\nfunction resolveYear(dateStr, originalText, now = new Date()) {\r\n  const R = (status, value, suggestion, reason) => ({ status, value, suggestion, reason });\r\n\r\n  const p = splitDate(dateStr);\r\n  if (!p.ok) return R('PASS', dateStr, null, `日期不符契約格式，不介入: \"${dateStr}\"`);\r\n\r\n  const today = todayTaipei(now);\r\n  const current = `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;\r\n\r\n  // 未來日期一律信任模型\r\n  if (current >= today) return R('PASS', dateStr, null, '日期未早於今日，信任模型');\r\n\r\n  const text = normalize(originalText);\r\n  // 過去日期 + 過去語意 = 補記錄，信任模型\r\n  if (PAST_HINT.test(text)) return R('PASS', dateStr, null, '過去日期且訊息含過去語意（補記錄）');\r\n  // 過去日期 + 訊息已明確給年份 = 使用者自己寫的，信任\r\n  if (YEAR_CTX.test(text)) return R('PASS', dateStr, null, '訊息已明確指定年份');\r\n\r\n  // 過去日期 + 無過去語意 + 無年份 -> 需要消歧\r\n  const md = extractMonthDay(text);\r\n  if (!md) {\r\n    return R('AMBIGUOUS', dateStr, null,\r\n      '模型給出過去日期，但訊息無明確月/日可據以推導（可能為相對日期誤算）');\r\n  }\r\n  if (md.month !== p.m || md.day !== p.d) {\r\n    return R('AMBIGUOUS', dateStr, null,\r\n      `模型月/日(${p.m}/${p.d}) 與訊息(${md.month}/${md.day}) 不一致`);\r\n  }\r\n  const target = nextOccurrence(md.month, md.day, today);\r\n  if (!target) return R('AMBIGUOUS', dateStr, null, '無法推導有效的下一個發生日');\r\n\r\n  // 差距 <= 45 天視為「可能是剛過去的今年」，不確定 -> 問\r\n  const diffDays = Math.round((Date.parse(today) - Date.parse(current)) / 86400000);\r\n  if (diffDays <= 45) {\r\n    return R('AMBIGUOUS', dateStr, target + p.rest,\r\n      `${current} 剛過去 ${diffDays} 天，可能是今年也可能是明年，需確認`);\r\n  }\r\n  return R('CORRECTED', target + p.rest, null,\r\n    `依訊息 ${md.month}/${md.day} 推導下一個發生日: ${current} -> ${target}`);\r\n}\r\n\r\n\r\n\r\n\r\n\n// ---- 解析模型輸出 ----\nconst ctx = $('Build Azure Payload').first().json._ctx;\n// Basic LLM Chain 回傳 { text }。舊的 choices 形狀保留為相容退路，\n// 這樣即使日後又換回直接呼叫 REST，本節點也不需要跟著改。\nconst raw = (typeof $json.text === 'string' && $json.text.trim())\n  ? $json.text\n  : ($json.choices && $json.choices[0] && $json.choices[0].message\n      ? $json.choices[0].message.content : null);\nif (!raw) throw new Error('[E_NO_CONTENT] AI 回應沒有內容（既不是 chainLlm 的 text，也不是 choices[0].message.content）');\n\n// 即使指定 response_format 仍保留圍欄剝除，避免供應商行為變動（rd-design N-10）\nconst cleaned = String(raw).trim()\n  .replace(/^\\`\\`\\`(?:json)?\\s*/i, '').replace(/\\s*\\`\\`\\`$/, '').trim();\n\nlet ai;\ntry { ai = JSON.parse(cleaned); }\ncatch (e) {\n  console.log('[E_BAD_JSON] 解析失敗，原始內容前 120 字:', cleaned.slice(0, 120));\n  throw new Error('[E_BAD_JSON] 模型輸出非合法 JSON: ' + e.message);\n}\n\nconst ev = Array.isArray(ai.events) && ai.events.length ? ai.events[0] : null;\nconst msg = ctx.latestUserMessage || '';\n\n// forceCreate 只依最新一則使用者訊息判定（避免歷史訊息誤觸）。\n// 觸發詞刻意放寬：使用者回「好，建立吧」「幫我建」「可以建立」都是明確的同意，\n// 若不認就會再問一次，而那正是使用者最不能忍受的體驗。\n// 誤觸的最壞後果只是「建立了一個資料完整但信心度偏低的事件」——\n// 使用者會收到成功卡、看得到內容、也能接著改；\n// 這個成本遠低於「我答應了它卻不理我」。故此處寧可寬鬆。\nconst forceCreate = /就這樣建立|直接建立|就這樣|先建立|不用問了|照這樣建|建立吧|幫我建|可以建立|確定建立|沒錯.{0,4}建|好.{0,4}建立|OK.{0,4}建立/i.test(msg);\n\n// 年份三態\nlet yearStatus = 'PASS', suggestion = null, yearReason = '無事件';\nlet startDateTime = ev ? ev.startDateTime : null;\nlet endDateTime = ev ? ev.endDateTime : null;\n// 改寫年份時 end 必須跟著位移相同年數，否則跨年事件會被拉成一年長。\nconst applyYear = (value) => {\n  const deltaY = Number(value.slice(0,4)) - Number(String(startDateTime).slice(0,4));\n  startDateTime = value;\n  if (endDateTime && /^\\d{4}-/.test(endDateTime)) {\n    endDateTime = String(Number(endDateTime.slice(0,4)) + deltaY) + endDateTime.slice(4);\n  }\n};\nif (ev && startDateTime) {\n  const r = resolveYear(startDateTime, msg);\n  yearStatus = r.status; suggestion = r.suggestion; yearReason = r.reason;\n  if (r.status === 'CORRECTED') applyYear(r.value);\n  // AMBIGUOUS 時澄清卡片會問「你是指 2027-03-15 嗎？」。\n  // 使用者回「就這樣建立」的語義是「對，就用你講的那個」，但 AMBIGUOUS 不像 CORRECTED\n  // 會改寫 startDateTime，而 force 規則排在 clarify 之前會直接命中，\n  // 於是事件用的是模型原本猜的年份，與使用者眼前確認的那一個不同 —— 而他不會發現。\n  // 故 force 時把卡片建議過的年份補套上去，確保「就這樣建立」建的是他看到的那個日期。\n  else if (r.status === 'AMBIGUOUS' && forceCreate && r.suggestion) applyYear(r.suggestion);\n}\n\n// --- 全天事件的 end.date 在 Google Calendar API 是「排他」的 ---\n// 使用者說「8/1 健檢」= 期望日曆上只佔 8/1，API 需 start=2026-08-01 / end=2026-08-02。\n// 若原樣送出 end=2026-08-01，Google 會建立零長度事件或直接回 400。\n// 模型輸出的 endDateTime 是「含尾日」的自然語義，故一律 +1 天轉為排他端點。\nconst DATE_ONLY = /^\\d{4}-\\d{2}-\\d{2}$/;\nconst addOneDay = (d) => {\n  const t = Date.parse(d + 'T00:00:00Z');\n  if (!Number.isFinite(t)) return d;\n  return new Date(t + 86400000).toISOString().slice(0, 10);\n};\n\n// Date.parse 會把不存在的日期「自動正規化」而非拒絕：\n// Date.parse('2026-02-30T09:00:00+08:00') 回傳的是 3 月 2 日，完全不報錯。\n// 模型幻覺出 2/30、4/31、非閏年的 2/29 時，使用者的日曆上會出現一個他從未同意的日期。\n// 因此在信任解析結果前，先逐欄比對月／日是否原樣保留。\n// 定義必須早於 addOneDay 的使用點 —— 全天分支要在覆寫 end 之前先驗它。\nconst calendarDateValid = (v) => {\n  const s = String(v || '');\n  const m = s.match(/^(\\d{4})-(\\d{2})-(\\d{2})/);\n  if (!m) return false;\n  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);\n  if (mo < 1 || mo > 12 || d < 1 || d > 31) return false;\n  const probe = new Date(Date.UTC(y, mo - 1, d));\n  return probe.getUTCFullYear() === y && probe.getUTCMonth() === mo - 1 && probe.getUTCDate() === d;\n};\n// 模型偶爾會給出矛盾的組合：日期是純日期（YYYY-MM-DD）卻標 isAllDay:false。\n// 純日期在語義上就是全天 —— 使用者說「明天請假」本來就不帶時刻。\n// 若照模型的旗標處理，Date.parse('2026-07-30') 會被當成 UTC 午夜（= 台北 08:00），\n// 再補 1 小時就變成「早上 8 點到 9 點的請假」，日曆上完全錯誤。\n// 這裡以「資料格式」為準而非以「模型旗標」為準：格式是客觀事實，旗標是模型的判斷。\n// 注意只在 start 為純日期時才覆寫；只要帶了時刻就一律尊重模型的 isAllDay:false。\nconst isAllDay = ev\n  ? (!!ev.isAllDay || (!!startDateTime && DATE_ONLY.test(String(startDateTime))))\n  : false;\n\n// end 的合法性必須在覆寫「之前」判定。\n// addOneDay('2027-02-30') 會回傳 '2027-03-03'（Date.parse 自動正規化），\n// 而帶時刻或無法解析的 end 會被三元運算直接換成 start —— 兩種情況下原始的\n// 非法值都在後面的 shapeValid / calendarDateValid 看到它之前就消失了，\n// 事件於是被當成合法的照樣寫進使用者日曆。\n//\n// 誠實的現況說明（mutation test 實測）：只拿掉下方的 && !allDayEndRejected 條件，\n// 三種非法 end 仍會被攔下 —— 帶時刻與亂碼被 shapeValid 的 DATE_ONLY 擋住，\n// '2027-02-30' 則因 Date.parse 對非法 ISO 日期回 NaN 而被 eventComplete 擋住。\n// 也就是說這個旗標目前是「第二道」防線。保留它的理由不是現在有洞，而是它守住\n// 一個具體的、很容易被寫出來的改壞方式：在下面的 else 裡「順手」補成 start+1。\n// 那一改會讓 endDateTime 變成合法純日期，shapeValid 與 parseTs 全部放行，\n// 一個 end 明確非法的事件就會被靜默建立成錯誤長度。旗標讓「明確非法」與\n// 「真的沒給」保持可區分 —— 這正是下面 if/else 分成兩條路的意義。\nlet allDayEndRejected = false;\nif (isAllDay) {\n  if (startDateTime && DATE_ONLY.test(String(startDateTime))) {\n    const rawEnd = endDateTime == null ? '' : String(endDateTime).trim();\n    if (!rawEnd) {\n      // end 真正缺失：全天事件補成 start 的隔天是合理且無歧義的預設\n      endDateTime = addOneDay(String(startDateTime));\n    } else if (DATE_ONLY.test(rawEnd) && calendarDateValid(rawEnd)) {\n      endDateTime = addOneDay(rawEnd);\n    } else {\n      // end 有值但不是合法的純日期（帶時刻／不存在的日期／亂碼）。\n      // 不可靜默改用 start —— 那會把一個明確錯誤的輸入變成看起來成功的事件。\n      // 標記後由 eventComplete 攔下，走 clarify 讓使用者確認。\n      allDayEndRejected = true;\n    }\n  }\n}\n\n// --- 定時事件缺少結束時間時補預設時長 ---\n// 「明天早上開會」是最常見的輸入，而 prompt 並未強制 endDateTime，模型經常只給開始時間。\n// 若不補，下方 eventComplete 會判為殘缺 -> hasValidEvent=false -> 走 suppress，\n// 使用者只會收到一個 ➖ reaction，看起來就像 bot 死機（council-accept 情境 C）。\n// Google Calendar 對定時事件本來就必須有 end，1 小時是其 UI 的預設值，採同一慣例。\nconst DEFAULT_DURATION_MS = 60 * 60 * 1000;\nif (!isAllDay && startDateTime && !endDateTime) {\n  const raw = String(startDateTime);\n  const s = Date.parse(raw);\n  const off = raw.match(/([+-]\\d{2}:\\d{2})$/);\n  if (Number.isFinite(s)) {\n    if (off) {\n      // 必須沿用 start 的 offset，不能用 Date.prototype.toISOString()。\n      // toISOString() 一律輸出 Z 結尾，而 Z 已被下方的時區守衛拒絕\n      //（模型寫 Z 幾乎必然是把台北時間誤標成 UTC，會差 8 小時）。\n      // 若這裡產生 Z，「明天早上開會」這種只講開始時間的訊息 —— 也就是最常見的輸入形式 ——\n      // 會全部因為系統自己補的 end 不合格而被判定資訊不足，走進澄清卡。\n      const om = (off[1][0] === '-' ? -1 : 1) * (Number(off[1].slice(1, 3)) * 60 + Number(off[1].slice(4, 6)));\n      endDateTime = new Date(s + DEFAULT_DURATION_MS + om * 60000).toISOString().slice(0, 19) + off[1];\n    } else {\n      // start 本身沒有 offset：它會被下方守衛擋下，這裡補什麼都不影響結果。\n      endDateTime = new Date(s + DEFAULT_DURATION_MS).toISOString();\n    }\n  }\n}\n\n// --- 事件完整性守衛 ---\n// 只檢查 start 是不夠的：模型可能吐出沒有標題、缺結束時間、或時間顛倒的殘缺事件，\n// 而 forceCreate 路徑會略過信心度門檻，殘缺事件會直接寫進使用者的真實日曆。\nconst parseTs = (v) => {\n  if (!v) return NaN;\n  const s = String(v);\n  return Date.parse(DATE_ONLY.test(s) ? s + 'T00:00:00Z' : s);\n};\n\n// 全天事件與定時事件的欄位格式必須各自成立，否則 n8n 的 Google Calendar 節點\n// 會走進錯誤的分支：全天分支會把時間部分整個剝掉（09:00-10:00 變成零長度的同一天），\n// 定時分支則會把純日期當成午夜。兩者都不是使用者要的，而且都不會報錯。\n// 刻意「不」接受 Z（UTC）結尾。prompt 明確要求 +08:00（見 SYSTEM_PROMPT 的輸出格式），\n// 模型吐出 Z 時幾乎必然是把「台北 09:00」誤寫成「09:00Z」—— 兩者相差 8 小時。\n// 這種錯誤沒有任何下游守衛擋得住：字串合法、Date.parse 成功、Google 也照寫，\n// 使用者要到當天才會發現會議在 17:00。實測見 probe-tz：Z 版本一路走到 create。\n// 寧可退回 clarify 請使用者重講，也不可寫入一個看起來正常的錯誤時間。\n// 非 +08:00 的其他 offset 仍然接受 —— 使用者明說「東京時間 10 點」是合法需求。\nconst DATE_TIME_OK = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?[+-]\\d{2}:\\d{2}$/;\nconst UTC_Z_SHAPE = /^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?Z$/;\n// 例外：使用者自己就講了 UTC。\n// 拒絕 Z 的前提是「模型把台北時間誤寫成 UTC」，但使用者說「UTC 14:00 的線上會議」時，\n// Z 正是他要的意思。此時仍退回澄清，他只會照原意再講一次、再被拒一次，\n// 形成一個他無法靠補充資訊解除的迴圈 —— 那正是這次改版要消滅的東西。\n// 語義上 Z 與 +00:00 完全等價，改寫成 +00:00 即可通過 DATE_TIME_OK，不影響時刻。\nconst EXPLICIT_UTC = /\\bUTC\\b|\\bGMT\\b|\\bZulu\\b|世界協調時間|協調世界時|格林威治|格林尼治/i;\nif (!isAllDay && EXPLICIT_UTC.test(msg)) {\n  const zToOffset = (v) => (UTC_Z_SHAPE.test(String(v || '')) ? String(v).replace(/Z$/, '+00:00') : v);\n  const beforeZ = startDateTime;\n  startDateTime = zToOffset(startDateTime);\n  endDateTime = zToOffset(endDateTime);\n  if (beforeZ !== startDateTime) console.log('[TZ_EXPLICIT_UTC] 使用者明示 UTC，Z 正規化為 +00:00:', beforeZ, '->', startDateTime);\n}\nconst usedUtcZ = !isAllDay\n  && (UTC_Z_SHAPE.test(String(startDateTime || '')) || UTC_Z_SHAPE.test(String(endDateTime || '')));\nconst shapeValid = isAllDay\n  ? (DATE_ONLY.test(String(startDateTime || '')) && DATE_ONLY.test(String(endDateTime || '')))\n  : (DATE_TIME_OK.test(String(startDateTime || '')) && DATE_TIME_OK.test(String(endDateTime || '')));\n\nconst startMs = parseTs(startDateTime);\nconst endMs = parseTs(endDateTime);\n\n// 目標日曆 ID。這個值會直接餵給 Google Calendar 節點的 calendar 參數\n// （mode:'id' + 運算式）。n8n 對該欄位設有 extractValue regex，若求值後的字串\n// 比不到，extract-value.ts L46-50 會直接 throw WorkflowOperationError，整個節點失敗。\n// 更糟的是該 regex 沒有 $ 錨點：'a@b@x.com' 會被靜默截斷成 'a@b'，事件寫到錯的日曆\n// 而沒有任何錯誤。因此這裡必須把非法值擋在上游，退回 fallback。\n// 已知會踩到的三種來源：\n//   1. v1 時代的舊卡片 metadata 沒有 calendar_id 欄位 -> undefined\n//   2. 使用者把 $vars.GCAL_ID 設成 'primary'（Google API 合法，但不符 n8n 的 regex）\n//   3. 使用者把 $vars.GCAL_ID 設成畸形 email（含 ( ) , : ; < > [ ] \\ \" ' 等字元）\n// 本 regex 刻意收斂成 Google 字元類的真子集（見 CalendarDescription.ts L65-68），\n// 少了反引號與 U+2019；並加上 $ 錨點防止上述靜默截斷。窮舉驗證見 calc-calendar-regex.mjs。\nconst CALENDAR_ID_OK = /^[A-Za-z0-9.!#$%&*+/=?^_{|}~-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+$/;\n// 退回預設日曆這件事必須讓使用者看得見。先前只寫 console.log —— 但使用者拿到的是一張\n// 綠色的「已建立」卡片，事件卻進了另一本日曆，他沒有任何理由去翻 n8n 的執行紀錄。\n// 註：'primary' 雖是 Google API 的合法值，卻**不能**放行 —— n8n 的 Google Calendar 節點\n// 在 id mode 上有自己的 regex validation（CalendarDescription.ts，errorMessage:\n// 'Not a valid Google Calendar ID'），且 extractValue 也要求 @，'primary' 兩者都不過。\n// 放行只會把「靜默寫錯日曆」換成「節點層失敗」，所以維持拒絕、改成明講。\nlet calendarFallbackUsed = false;\nlet calendarRejectedValue = null;\nfunction pickCalendarId(existingEvent) {\n  const configured = (typeof $vars !== 'undefined' && $vars && $vars.GCAL_ID) ? $vars.GCAL_ID : null;\n  const candidates = [existingEvent && existingEvent.calendarId, configured];\n  for (const c of candidates) {\n    const s = String(c == null ? '' : c).trim();\n    if (s && CALENDAR_ID_OK.test(s)) return s;\n  }\n  // 走到這裡代表所有候選都被拒絕。若使用者「有設定」GCAL_ID 卻被拒，這是設定錯誤，\n  // 事件會寫進 fallback 日曆 —— 必須留下排查線索，也必須告訴使用者本人。\n  calendarFallbackUsed = true;\n  if (configured != null && String(configured).trim() !== '') {\n    calendarRejectedValue = String(configured).slice(0, 60);\n    console.log(\n      '[pickCalendarId] $vars.GCAL_ID 不是合法的 Google 日曆 ID，已退回預設日曆。'\n      + ' 收到的值=' + JSON.stringify(String(configured))\n      + ' 需符合 ' + CALENDAR_ID_OK.source\n    );\n  }\n  return 'abc12207@gmail.com';\n}\n\nconst eventComplete = !!(\n  ev\n  && String(ev.title || '').trim()\n  && Number.isFinite(startMs)\n  && Number.isFinite(endMs)\n  && endMs > startMs\n  && shapeValid\n  && !allDayEndRejected\n  && calendarDateValid(startDateTime)\n  && calendarDateValid(endDateTime)\n);\n\n// --- 澄清原因：讓「不能建立」變成使用者可以行動的一句話 ---\n// 只說「我對這個行程的把握不夠」時，使用者無從得知要補什麼。更糟的是他會照卡片\n// 回「就這樣建立」，而 force 規則要求 hasValidEvent，於是收到一模一樣的卡片 ——\n// 這正是使用者最擔心的「我說了就這樣建立，系統不理我」。\n// 因此把每一項失敗具名，由卡片翻譯成具體、可行動的說明。\n// 排序即優先序：最具體、最能指出「錯在哪」的原因排前面，卡片只顯示第一個。\nconst clarifyReasons = [];\n// THREAD_TRUNCATED 排最前：它是系統層的阻擋，使用者補再多資訊也無法解除，\n// 必須直接告訴他「這串太長了，請開一則新訊息」，否則他會一直補而一直失敗。\nif (ctx.threadTruncated) clarifyReasons.push('THREAD_TRUNCATED');\nif (!ev) clarifyReasons.push('NO_EVENT');\nelse {\n  if (usedUtcZ) clarifyReasons.push('TIMEZONE_UTC');\n  if (!calendarDateValid(startDateTime) || !calendarDateValid(endDateTime)) clarifyReasons.push('DATE_NOT_EXIST');\n  if (allDayEndRejected) clarifyReasons.push('ALLDAY_END_INVALID');\n  if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs <= startMs) clarifyReasons.push('END_BEFORE_START');\n  if (!String(ev.title || '').trim()) clarifyReasons.push('NO_TITLE');\n  if (!startDateTime || !Number.isFinite(startMs)) clarifyReasons.push('NO_START');\n  if (!endDateTime || !Number.isFinite(endMs)) clarifyReasons.push('NO_END');\n  if (!shapeValid && !usedUtcZ) clarifyReasons.push('SHAPE_INVALID');\n}\n\n// aiHasEvent 與 hasValidEvent 是兩件事，混用會造成靜默抹殺：\n//   aiHasEvent   = 模型認為這則訊息在講一個行程（決定「要不要回應使用者」）\n//   hasValidEvent= 而且解析出來的資料完整到可以寫進日曆（決定「能不能寫日曆」）\n// suppress 只能看前者。若模型說有事件、只是資料殘缺就靜默 suppress，\n// 使用者會完全收不到回應而不知道發生什麼事。\nconst aiHasEvent = !!(ai.hasEvent && ev);\n\n// isDuplicate：與既有事件比對 start+title，允許同 thread 建立不同事件（B-2）\n// 比對粒度必須是「完整開始時刻」而非只比日期 —— 同一天早上 9 點與 11 點的同名會議\n// 是兩場合法的不同會議，只比日期會把第二場當成重複而擋掉。\n// 但全天事件本來就只有日期，這時退回比日期才是正確的。\nconst existing = ctx.existingEvent;\nconst sameInstant = (a, b) => {\n  const A = String(a || ''), B = String(b || '');\n  if (!A || !B) return false;\n  // 一側是純日期（全天）、另一側帶時刻（定時）時，兩者是不同型態的事件：\n  // 「6/1 全天請假」與「6/1 09:00 開會」即使同名也不是同一件事。\n  // 舊寫法用 || 判斷，只要任一側是純日期就退化成比日期，會把後者當成前者的重複而擋掉，\n  // 使用者無法在已有全天事件的那天再建立定時事件。必須兩側形狀一致才比較。\n  const aDateOnly = DATE_ONLY.test(A);\n  const bDateOnly = DATE_ONLY.test(B);\n  if (aDateOnly !== bDateOnly) return false;\n  if (aDateOnly) return A.slice(0, 10) === B.slice(0, 10);\n  const ta = Date.parse(A), tb = Date.parse(B);\n  return Number.isFinite(ta) && Number.isFinite(tb) && ta === tb;\n};\n// 重複判定必須掃過 thread 中的每一個既有事件，不能只比對最近那一筆。\n// thread 裡先建 A 再建 B 之後，使用者若再說一次 A，只比 B 會判定不重複而重覆寫入。\n// 沒有 allEvents 時（舊資料形狀）退回單筆比對，行為與先前一致。\nconst candidates = Array.isArray(ctx.allEvents) && ctx.allEvents.length\n  ? ctx.allEvents\n  : (existing ? [existing] : []);\nconst isDuplicate = !!(ev && candidates.some((c) => c\n  && sameInstant(c.start, startDateTime)\n  && (c.title || '') === (ev.title || '')));\n\n// --- update 要改哪一個事件 ---\n// 過去 eventId 一律取 existing（thread 裡最後建立的那一筆）。\n// 但同一個 thread 完全可能已經有 A、B 兩場會議；使用者說「把 A 改到下週三」時，\n// 系統會安靜地把 B 改掉：他收到「已更新」的成功卡，實際被動的是另一場會議，\n// 而 A 原封不動。這是會直接破壞真實行事曆、且全程沒有任何錯誤訊號的情況。\n//\n// 改法刻意保守，只做「完全相同」與「互為子字串」兩種標題比對：\n// 模糊比對在標題相近時會挑錯，而挑錯的代價（改到別場會議）遠高於挑不到（退回舊行為）。\n// 比對不到時不擋下來 —— 使用者可能正是要改標題（A → C），擋住就是死路，\n// 違反「不要讓使用者卡住」。改為退回最後一筆，同時把 updateAmbiguous 標起來，\n// 由更新卡明說「thread 裡有 N 個事件，我改的是這一個」，讓靜默錯誤變成可見錯誤。\nconst normTitle = (s) => String(s || '').trim().toLowerCase();\nconst intentIsUpdate = ai.intent === 'update';\nlet updateTarget = existing;\nlet updateAmbiguous = false;\nif (intentIsUpdate && candidates.length > 1) {\n  const want = normTitle(ev && ev.title);\n  let matched = null;\n  if (want) {\n    matched = candidates.filter((c) => normTitle(c.title) === want).pop() || null;\n    if (!matched) {\n      const partial = candidates.filter((c) => {\n        const t = normTitle(c.title);\n        return t && (t.indexOf(want) >= 0 || want.indexOf(t) >= 0);\n      });\n      // 只有唯一一筆部分相符才敢採用；兩筆以上一樣是猜，寧可退回並說出口\n      if (partial.length === 1) matched = partial[0];\n    }\n  }\n  if (matched) {\n    updateTarget = matched;\n  } else {\n    updateAmbiguous = true;\n    console.log('[UPDATE_TARGET_AMBIGUOUS] candidates=' + candidates.length + ' fallback=last');\n  }\n}\n\n// --- 圖片全數讀取失敗 ---\n// 使用者上傳圖片這個動作本身就表達了「請看這張圖」。若一張都沒下載成功，\n// 系統實際上是在「看不到圖」的狀態下作答，而模型仍可能從文字猜出一個高信心事件，\n// 或反過來判定沒有事件而靜默 suppress。兩種結果使用者都不會知道圖沒被讀到。\n// 因此這裡標記出來，由 Route Outcome 強制轉向 clarify：\n// 卡片會一併顯示 rejectedFiles 中的失敗原因，使用者可補文字或重傳。\n// 注意不動 hasValidEvent —— 那是「資料完整性」的語義，動它會連帶讓\n// force 路徑（使用者第二輪明說「就這樣建立」）失效，使用者將無法脫困。\nconst imagesExpected = Number(ctx.imagesExpected || 0);\nconst imagesAttached = Number(ctx.imagesAttached || 0);\nconst imagesAllFailed = imagesExpected > 0 && imagesAttached === 0;\n\n// --- 附件未讀取的原因分類 ---\n// 原本卡片一律顯示「超過 4 張上限或非圖片格式」，但下載失敗（網路抖動、files:read 權限不足）\n// 也會落進同一句話。使用者傳的明明是正常 PNG，卻被告知格式不對，\n// 於是他去轉檔、壓縮、重存 —— 全是白工，而真正該做的事（重傳一次）反而沒被指出。\n// 分類後各給各的自救方式；放在這裡而不是寫進卡片運算式，是為了讓它能被測試覆蓋。\nconst rj = Array.isArray(ctx.rejectedFiles) ? ctx.rejectedFiles : [];\nconst rjReason = (r) => (r && r.reason) || '';\nconst RETRYABLE = ['R_DOWNLOAD_FAILED', 'R_INACCESSIBLE', 'R_NO_URL', 'R_MALFORMED'];\nconst nRetryable = rj.filter((r) => RETRYABLE.indexOf(rjReason(r)) >= 0).length;\nconst nTooMany = rj.filter((r) => rjReason(r) === 'R_TOO_MANY').length;\nconst nBadType = rj.filter((r) => rjReason(r) === 'R_UNSUPPORTED_TYPE').length;\nconst nTooLarge = rj.filter((r) => rjReason(r) === 'R_TOO_LARGE').length;\n// R_TOO_LARGE 先前不在任何一類裡：使用者傳一張 25MB 的圖，rejectedFiles 記了一筆，\n// 但 attachmentNotice 算出來是空字串，於是連「圖太大」都不會有人告訴他。\n// 為了不讓下一個新增的 reason 再重蹈覆轍，這裡補一條 catch-all ——\n// 任何沒被上面認領的原因都必須發出通知，寧可講得籠統也不要靜默。\nconst CLASSIFIED = RETRYABLE.concat(['R_TOO_MANY', 'R_UNSUPPORTED_TYPE', 'R_TOO_LARGE']);\nconst nUnclassified = rj.filter((r) => CLASSIFIED.indexOf(rjReason(r)) < 0).length;\nconst noticeParts = [];\nif (nRetryable) noticeParts.push(nRetryable + ' 張圖片這次沒讀成功，可直接在本執行緒重傳');\nif (nTooMany) noticeParts.push(nTooMany + ' 張圖片超過單次 4 張上限，這次沒有讀到');\nif (nBadType) noticeParts.push(nBadType + ' 張圖片的格式我讀不了（例如 BMP、TIFF、SVG），請另存成 PNG 或 JPG 再傳');\nif (nTooLarge) noticeParts.push(nTooLarge + ' 張圖片超過 20MB，請壓縮或縮小尺寸後再傳');\nif (nUnclassified) noticeParts.push(nUnclassified + ' 個附件無法讀取');\nconst attachmentNotice = noticeParts.join('、');\n\n// 附件全數被拒時，卡片上「我看不出這是行程」的表面原因，實際根因是「我根本沒讀到那張圖」。\n// 若只顯示 NO_EVENT，使用者會反覆用文字補述，卻永遠不知道該重傳圖片。\n// 排在 THREAD_TRUNCATED 之後、其餘之前：截斷是系統層硬阻擋，優先度更高。\nif (attachmentNotice) {\n  clarifyReasons.splice(clarifyReasons.indexOf('THREAD_TRUNCATED') >= 0 ? 1 : 0, 0, 'ATTACHMENT_FAILED');\n}\n\n// force 必須能覆蓋「模型自相矛盾」的情況：\n// 模型偶爾會回 hasEvent:false，卻同時在 events[0] 給出完整且合理的事件。\n// 使用者看著澄清卡上明明白白的日期與標題說「就這樣建立」，系統卻因為 ai.hasEvent 是 false\n// 而再問一次 —— 對他而言就是「我說了它不理我」，也就是這次改版最想消滅的體驗。\n// 放行的門檻沒有降低：ev 必須存在、startDateTime 必須有、eventComplete 仍嚴格檢查\n// 標題／開始／結束／結束晚於開始／格式合法。模型真的認為沒有事件時 events 通常是空的，\n// ev 為 null，這條路依然走不通。\nconst hasValidEvent = !!((ai.hasEvent || forceCreate) && ev && startDateTime && eventComplete);\n\n// --- 卡片顯示用的可讀時間 ---\n// 卡片原本直接印 ISO 字串（2027-03-01T09:00:00+08:00），使用者得自己在腦中解析，\n// 而且看不出星期幾 —— 但「那天是星期幾」正是他檢查有沒有排錯時最常用的線索。\n// 全天事件的 endDateTime 在上面已轉成 Google 要求的 exclusive 形式（addOneDay），\n// 顯示時必須還原成「含當天」，否則單日活動會被寫成「3月1日 ～ 3月2日」而顯得多了一天。\n// 放在這裡而不是寫進卡片運算式：運算式求值失敗會讓整張卡片發不出去，而且無法被測試覆蓋。\nconst WEEKDAY_TW = ['日', '一', '二', '三', '四', '五', '六'];\nconst displayTime = (() => {\n  const parts = (v) => {\n    const m = String(v || '').match(/^(\\d{4})-(\\d{2})-(\\d{2})(?:T(\\d{2}):(\\d{2}))?/);\n    return m ? { y: +m[1], mo: +m[2], d: +m[3], hh: m[4] || null, mi: m[5] || null } : null;\n  };\n  const a = parts(startDateTime);\n  if (!a) return '';\n  const thisYear = Number(new Intl.DateTimeFormat('en-CA', {\n    timeZone: 'Asia/Taipei', year: 'numeric',\n  }).format(new Date()));\n  // 一律用 UTC 建構，否則執行環境的本地時區會把日期推移一天，星期幾就會算錯\n  const wd = (p) => WEEKDAY_TW[new Date(Date.UTC(p.y, p.mo - 1, p.d)).getUTCDay()];\n  const dateOf = (p) => (p.y === thisYear ? '' : p.y + '年') + p.mo + '月' + p.d + '日（' + wd(p) + '）';\n  const timeOf = (p) => (p.hh ? p.hh + ':' + p.mi : '');\n  const sameDay = (p, q) => !!q && p.y === q.y && p.mo === q.mo && p.d === q.d;\n\n  if (isAllDay) {\n    let last = parts(endDateTime);\n    if (last) {\n      const back = new Date(Date.UTC(last.y, last.mo - 1, last.d) - 86400000);\n      last = { y: back.getUTCFullYear(), mo: back.getUTCMonth() + 1, d: back.getUTCDate() };\n    }\n    return (!last || sameDay(a, last))\n      ? dateOf(a) + ' 整天'\n      : dateOf(a) + ' ～ ' + dateOf(last) + ' 整天';\n  }\n\n  const b = parts(endDateTime);\n  if (!b) return dateOf(a) + ' ' + timeOf(a);\n  return sameDay(a, b)\n    ? dateOf(a) + ' ' + timeOf(a) + '–' + timeOf(b)\n    : dateOf(a) + ' ' + timeOf(a) + ' → ' + dateOf(b) + ' ' + timeOf(b);\n})();\n\n// 使用者明說「就這樣建立」卻仍不能建立時，卡片必須承接這句話。\n// 若沉默地再問一次同樣的問題，使用者會認為系統聽不懂人話而放棄 —— 這是最高優先的需求。\nconst forceIgnored = forceCreate && !hasValidEvent;\n\n// pickCalendarId 必須在建構輸出物件「之前」呼叫 —— 它會設定 calendarFallbackUsed，\n// 若依賴物件字面量的求值順序來取得那個旗標，日後有人調整欄位順序就會靜默失效。\nconst calendarIdResolved = pickCalendarId(existing);\nconst calendarWarning = calendarFallbackUsed && calendarRejectedValue\n  ? '你設定的日曆 ID「' + calendarRejectedValue + '」無法使用，這次寫進了預設日曆'\n  : '';\n\nreturn [{ json: {\n  ...ctx,\n  imagesAllFailed,\n  hasValidEvent,\n  clarifyReason: clarifyReasons[0] || null,\n  forceIgnored,\n  attachmentNotice,\n  calendarWarning,\n  displayTime,\n  aiHasEvent,\n  confidence: typeof ai.confidence === 'number' ? ai.confidence : 0,\n  intent: ai.intent === 'update' ? 'update' : 'create',\n  title: ev ? ev.title : null,\n  startDateTime, endDateTime,\n  isAllDay,\n  location: ev ? (ev.location || '') : '',\n  description: ev ? (ev.description || '') : '',\n  imageTranscript: ai.imageTranscript || '',\n  reasoning: ai.reasoning || '',\n  yearStatus, yearSuggestion: suggestion, yearReason,\n  forceCreate, isDuplicate,\n  eventId: updateTarget ? updateTarget.eventId : null,\n  updateTargetTitle: updateTarget ? (updateTarget.title || '') : '',\n  updateTargetStart: updateTarget ? (updateTarget.start || '') : '',\n  updateAmbiguous,\n  threadEventCount: candidates.length,\n  calendarId: calendarIdResolved,\n} }];"
+      }
+    },
+    {
+      "id": "sw-013",
+      "name": "Route Outcome",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2400,
+        400
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "suppress",
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c-suppress",
+                    "leftValue": "={{ !$json.aiHasEvent && $json.intent !== 'update' && !$json.forceCreate && !$json.imagesAllFailed && !$json.attachmentNotice }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
               },
-              "rightValue": "no_event"
+              "renameOutput": true
             },
             {
-              "id": "cond-not-error",
-              "leftValue": "={{ $json.status }}",
-              "operator": {
-                "operation": "notEquals",
-                "type": "string"
+              "outputKey": "not_owner",
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c-not_owner",
+                    "leftValue": "={{ !$json.isOwner && ($json.aiHasEvent || $json.intent === 'update') }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
               },
-              "rightValue": "error"
-            }
-          ],
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "loose",
-            "version": 2
-          }
-        },
-        "options": {}
-      },
-      "position": [
-        1168,
-        464
-      ],
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3
-    },
-    {
-      "alwaysOutputData": false,
-      "id": "46555180-f9e7-44c4-b114-f941adc13adc",
-      "name": "Check Confidence Score",
-      "parameters": {
-        "conditions": {
-          "combinator": "and",
-          "conditions": [
+              "renameOutput": true
+            },
             {
-              "id": "cond-conf",
-              "leftValue": "={{ $json.confidence }}",
-              "operator": {
-                "operation": "gte",
-                "type": "number"
+              "outputKey": "update",
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c-update",
+                    "leftValue": "={{ $json.intent === 'update' && !!$json.eventId && $json.isOwner && $json.hasValidEvent && !$json.imagesAllFailed && !$json.threadTruncated }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
               },
-              "rightValue": 0.7
+              "renameOutput": true
+            },
+            {
+              "outputKey": "force",
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c-force",
+                    "leftValue": "={{ $json.forceCreate && $json.round >= 2 && $json.isOwner && !$json.isDuplicate && $json.hasValidEvent }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "clarify",
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c-clarify",
+                    "leftValue": "={{ $json.yearStatus === 'AMBIGUOUS' }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "create",
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c-create",
+                    "leftValue": "={{ $json.hasValidEvent && $json.confidence >= 0.7 && $json.isOwner && !$json.isDuplicate && !$json.imagesAllFailed && !$json.threadTruncated }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "duplicate",
+              "conditions": {
+                "combinator": "and",
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "c-duplicate",
+                    "leftValue": "={{ $json.isDuplicate }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true
             }
-          ],
-          "options": {
-            "caseSensitive": true,
-            "leftValue": "",
-            "typeValidation": "loose",
-            "version": 2
-          }
+          ]
         },
-        "options": {}
-      },
-      "position": [
-        1392,
-        464
-      ],
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2.3
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "clarify"
+        }
+      }
     },
     {
+      "id": "gcal-101",
+      "name": "Create Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2650,
+        100
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "operation": "create",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.calendarId }}"
+        },
+        "start": "={{ $json.startDateTime }}",
+        "end": "={{ $json.endDateTime }}",
+        "additionalFields": {
+          "summary": "={{ $json.title }}",
+          "description": "={{ $json.description }}",
+          "location": "={{ $json.location }}",
+          "allday": "={{ $json.isAllDay ? 'yes' : 'no' }}",
+          "sendUpdates": "none",
+          "maxAttendees": 50
+        }
+      },
       "credentials": {
         "googleCalendarOAuth2Api": {
           "id": "ERUGcDCTMJESC4hA",
           "name": "Google Calendar account"
         }
-      },
-      "id": "9b1a9087-efb1-4346-9680-09673497b489",
-      "name": "Create Calendar Event",
-      "onError": "continueErrorOutput",
+      }
+    },
+    {
+      "id": "http-102",
+      "name": "Send Success Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2900,
+        100
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
       "parameters": {
-        "additionalFields": {
-          "allday": "={{ $json.isAllDay ? 'yes' : 'no' }}",
-          "description": "={{$json.description}}",
-          "location": "={{$json.location}}",
-          "maxAttendees": 50,
-          "sendUpdates": "none",
-          "summary": "={{$json.title}}"
-        },
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  channel: $('Parse AI Response').first().json.channel,\n  thread_ts: $('Parse AI Response').first().json.threadTs,\n  text: '\\u5df2\\u5efa\\u7acb\\u884c\\u4e8b\\u66c6\\u4e8b\\u4ef6\\uff1a' + String($('Parse AI Response').first().json.title || '').slice(0, 150),\n  metadata: {\n    event_type: 'gcal_event_created',\n    event_payload: {\n      event_id: $json.id,\n      calendar_id: $('Parse AI Response').first().json.calendarId,\n      start: $('Parse AI Response').first().json.startDateTime,\n      title: String($('Parse AI Response').first().json.title || '').slice(0, 200)\n    }\n  },\n  attachments: [{\n    color: '#2eb886',\n    blocks: [\n      { type: 'header', text: { type: 'plain_text', text: '\\u2705 已建立行事曆事件', emoji: true } },\n      { type: 'section', fields: [\n        { type: 'mrkdwn', text: '*事件*\\n' + String($('Parse AI Response').first().json.title || '\\u2014').slice(0, 400) },\n        { type: 'mrkdwn', text: '*時間*\\n' + String($('Parse AI Response').first().json.displayTime || $('Parse AI Response').first().json.startDateTime || '\\u2014').slice(0, 120) }\n      ].concat($('Parse AI Response').first().json.location\n        ? [{ type: 'mrkdwn', text: '*地點*\\n' + String($('Parse AI Response').first().json.location).slice(0, 300) }]\n        : []) },\n      { type: 'context', elements: [{ type: 'mrkdwn',\n        text: ($('Parse AI Response').first().json.imageTranscript\n          ? '\\ud83d\\uddbc \\u5716\\u7247\\u8f49\\u9304\\uff1a' + String($('Parse AI Response').first().json.imageTranscript).slice(0, 300)\n          : '\\ud83d\\udcdd ' + String($('Parse AI Response').first().json.reasoning || '').slice(0, 300)) }]},\n      { type: 'context', elements: [{ type: 'mrkdwn',\n        text: ($json.htmlLink ? '<' + $json.htmlLink + '|\\u5728 Google \\u65e5\\u66c6\\u4e2d\\u958b\\u555f> \\u00b7 ' : '')\n          + '\\u9700\\u4fee\\u6539\\u8acb\\u76f4\\u63a5\\u56de\\u8986\\u672c\\u57f7\\u884c\\u7dd2'\n          + ($('Parse AI Response').first().json.yearStatus === 'CORRECTED'\n             ? ' \\u00b7 \\u26a0 \\u5e74\\u4efd\\u5df2\\u81ea\\u52d5\\u6821\\u6b63' : '')\n          + ($('Parse AI Response').first().json.attachmentNotice\n             ? ' \\u00b7 \\u26a0 ' + $('Parse AI Response').first().json.attachmentNotice : '')\n          + ($('Parse AI Response').first().json.calendarWarning\n             ? ' \\u00b7 \\u26a0 ' + $('Parse AI Response').first().json.calendarWarning : '') }]}\n    ]\n  }]\n}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "gcal-103",
+      "name": "Update Calendar Event",
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        2650,
+        250
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "parameters": {
+        "operation": "update",
+        "eventId": "={{ $json.eventId }}",
         "calendar": {
           "__rl": true,
-          "cachedResultName": "abc12207@gmail.com",
-          "mode": "list",
-          "value": "abc12207@gmail.com"
+          "mode": "id",
+          "value": "={{ $json.calendarId }}"
         },
-        "end": "={{$json.endDateTime}}",
-        "operation": "create",
-        "start": "={{$json.startDateTime}}"
+        "updateFields": {
+          "summary": "={{ $json.title || undefined }}",
+          "start": "={{ $json.startDateTime || undefined }}",
+          "end": "={{ $json.endDateTime || undefined }}",
+          "allday": "={{ $json.isAllDay ? 'yes' : 'no' }}",
+          "location": "={{ $json.location || undefined }}",
+          "description": "={{ $json.description || undefined }}",
+          "sendUpdates": "none"
+        }
       },
-      "position": [
-        1616,
-        368
-      ],
-      "type": "n8n-nodes-base.googleCalendar",
-      "typeVersion": 1.3
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "ERUGcDCTMJESC4hA",
+          "name": "Google Calendar account"
+        }
+      }
     },
     {
-      "id": "build-success-blocks",
-      "name": "Build Success Blocks",
+      "id": "http-104",
+      "name": "Send Updated Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2900,
+        250
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
       "parameters": {
-        "jsCode": "const data = $input.first().json;\n\nlet dateTimeText;\nif (data.start && data.start.date) {\n  const dt = DateTime.fromFormat(data.start.date, 'yyyy-MM-dd');\n  dateTimeText = dt.toFormat('MM月dd日 (cccc)', { locale: 'zh-TW' });\n} else if (data.start && data.start.dateTime) {\n  const start = DateTime.fromISO(data.start.dateTime).setZone('Asia/Taipei');\n  const end = DateTime.fromISO(data.end.dateTime).setZone('Asia/Taipei');\n  dateTimeText = start.toFormat('MM月dd日 (cccc) HH:mm', { locale: 'zh-TW' }) + ' - ' + end.toFormat('HH:mm', { locale: 'zh-TW' });\n} else {\n  dateTimeText = '未指定';\n}\n\nconst descPreview = data.description ? data.description.split('📋 來源信息：')[0].trim() : '';\n\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: '✅ 日曆事件已成功建立！', emoji: true } },\n  { type: 'section', text: { type: 'mrkdwn', text: `📅 *${data.summary}*` } },\n  { type: 'section', fields: [\n    { type: 'mrkdwn', text: `*🗓️ 日期/時間*\\n${dateTimeText}` },\n    { type: 'mrkdwn', text: `*📍 地點*\\n${data.location || '未指定'}` }\n  ]},\n  { type: 'divider' }\n];\n\nif (descPreview) {\n  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `📝 *備註*\\n${descPreview}` } });\n  blocks.push({ type: 'divider' });\n}\n\nblocks.push({ type: 'actions', elements: [{\n  type: 'button',\n  text: { type: 'plain_text', text: '📎 查看事件', emoji: true },\n  style: 'primary',\n  url: data.htmlLink,\n  action_id: 'view_event'\n}]});\n\nblocks.push({ type: 'divider' });\nblocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: `🤖 由 AI 助手自動建立 • 事件ID: ${data.id}` }] });\n\nreturn [{ json: { blocks: JSON.stringify(blocks), fallbackText: `✅ 日曆事件已成功建立！ ${data.summary}` } }];",
-        "mode": "runOnceForAllItems"
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  channel: $('Parse AI Response').first().json.channel,\n  thread_ts: $('Parse AI Response').first().json.threadTs,\n  text: '已更新行事曆事件',\n  metadata: {\n    event_type: 'gcal_event_created',\n    event_payload: {\n      event_id: $json.id,\n      calendar_id: $('Parse AI Response').first().json.calendarId,\n      start: $('Parse AI Response').first().json.startDateTime,\n      title: String($('Parse AI Response').first().json.title || '').slice(0, 200)\n    }\n  },\n  attachments: [{\n    color: '#4a90d9',\n    blocks: [\n      { type: 'header', text: { type: 'plain_text', text: '\\u270f\\ufe0f \\u5df2\\u66f4\\u65b0\\u884c\\u4e8b\\u66c6\\u4e8b\\u4ef6', emoji: true } },\n      { type: 'section', fields: [\n        { type: 'mrkdwn', text: '*事件*\\n' + String($('Parse AI Response').first().json.title || '\\u2014').slice(0, 400) },\n        { type: 'mrkdwn', text: '*時間*\\n' + String($('Parse AI Response').first().json.displayTime || $('Parse AI Response').first().json.startDateTime || '\\u2014').slice(0, 120) }\n      ].concat($('Parse AI Response').first().json.location\n        ? [{ type: 'mrkdwn', text: '*地點*\\n' + String($('Parse AI Response').first().json.location).slice(0, 300) }]\n        : []) },\n      { type: 'context', elements: [{ type: 'mrkdwn',\n        text: '\\ud83d\\udcdd ' + String($('Parse AI Response').first().json.reasoning || '').slice(0, 300) }]\n        .concat($('Parse AI Response').first().json.updateAmbiguous\n          ? [{ type: 'mrkdwn',\n              text: '\\u26a0 \\u9019\\u500b\\u57f7\\u884c\\u7dd2\\u88e1\\u6709 '\n                + $('Parse AI Response').first().json.threadEventCount\n                + ' \\u500b\\u4e8b\\u4ef6\\uff0c\\u6211\\u66f4\\u65b0\\u7684\\u662f\\u300c'\n                + String($('Parse AI Response').first().json.updateTargetTitle || '\\u2014').slice(0, 120)\n                + '\\u300d\\uff08\\u539f\\u6642\\u9593 '\n                + String($('Parse AI Response').first().json.updateTargetStart || '\\u2014').slice(0, 40)\n                + '\\uff09\\u3002\\u82e5\\u4e0d\\u662f\\u9019\\u4e00\\u500b\\uff0c\\u8acb\\u544a\\u8a34\\u6211\\u8981\\u6539\\u54ea\\u4e00\\u500b\\u3002' }]\n          : []) },\n      { type: 'context', elements: [{ type: 'mrkdwn',\n        text: ($json.htmlLink ? '<' + $json.htmlLink + '|\\u5728 Google \\u65e5\\u66c6\\u4e2d\\u958b\\u555f> \\u00b7 ' : '')\n          + '\\u9700\\u518d\\u4fee\\u6539\\u8acb\\u7e7c\\u7e8c\\u56de\\u8986\\u672c\\u57f7\\u884c\\u7dd2'\n          + ($('Parse AI Response').first().json.attachmentNotice\n             ? ' \\u00b7 \\u26a0 ' + $('Parse AI Response').first().json.attachmentNotice : '')\n          + ($('Parse AI Response').first().json.calendarWarning\n             ? ' \\u00b7 \\u26a0 ' + $('Parse AI Response').first().json.calendarWarning : '') }]}\n    ]\n  }]\n}) }}",
+        "options": {}
       },
-      "position": [
-        1840,
-        368
-      ],
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
     },
     {
+      "id": "http-105",
+      "name": "Send Clarify Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2650,
+        400
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  channel: $json.channel,\n  thread_ts: $json.threadTs,\n  text: '需要確認：' + ($json.yearStatus === 'AMBIGUOUS' && $json.yearSuggestion\n    ? '你是指 ' + String($json.yearSuggestion).slice(0, 10) + ' 嗎？'\n    : ({\"THREAD_TRUNCATED\":\"這串對話太長了，我只讀得到前 100 則訊息，可能會漏掉你最新的補充。請開一則新訊息重新告訴我這個行程。\",\"TIMEZONE_UTC\":\"我讀到的時間沒有標明時區，直接建立可能會差 8 小時。請用「幾月幾號幾點」再說一次，例如「3/15 下午 2 點」。\",\"DATE_NOT_EXIST\":\"我讀到的日期並不存在（像 2/30 這樣）。請確認正確的日期。\",\"ALLDAY_END_INVALID\":\"這看起來是整天的行程，但我讀不出結束日期。請說「哪一天」或「從哪天到哪天」。\",\"END_BEFORE_START\":\"結束時間不晚於開始時間。請重新說一次這段時間。\",\"NO_TITLE\":\"時間我知道了，但不確定這是什麼活動。請幫它取個名稱。\",\"NO_START\":\"我還不確定開始時間。請告訴我日期和時間。\",\"NO_END\":\"我還不確定什麼時候結束。可以說「到幾點」或「大概多久」。\",\"SHAPE_INVALID\":\"我讀到的時間格式不完整。請用「幾月幾號幾點」再說一次。\",\"NO_EVENT\":\"我沒有從訊息裡讀出可以建立的行程。請告訴我時間和事由。\",\"ATTACHMENT_FAILED\":\"你傳的圖片我沒有讀到，所以看不出裡面的行程內容。可以直接在本執行緒重傳，或用文字告訴我時間和事由。\"}[$json.clarifyReason] || '請補充時間或事件內容')),\n  attachments: [{\n    color: '#e8a33d',\n    blocks: [\n      { type: 'header', text: { type: 'plain_text', text: '❓ 需要確認一下', emoji: true } },\n      { type: 'section',\n        text: { type: 'mrkdwn',\n          text: ($json.forceIgnored ? '✋ *我收到你說的「就這樣建立」了* — 但還差一項才能建立：\\n\\n' : '')\n            + ($json.yearStatus === 'AMBIGUOUS'\n              ? '我不確定日期的年份。' +\n                ($json.yearSuggestion ? '你是指 *' + String($json.yearSuggestion).slice(0,10) + '* 嗎？' : '')\n              : ({\"THREAD_TRUNCATED\":\"這串對話太長了，我只讀得到前 100 則訊息，可能會漏掉你最新的補充。請開一則新訊息重新告訴我這個行程。\",\"TIMEZONE_UTC\":\"我讀到的時間沒有標明時區，直接建立可能會差 8 小時。請用「幾月幾號幾點」再說一次，例如「3/15 下午 2 點」。\",\"DATE_NOT_EXIST\":\"我讀到的日期並不存在（像 2/30 這樣）。請確認正確的日期。\",\"ALLDAY_END_INVALID\":\"這看起來是整天的行程，但我讀不出結束日期。請說「哪一天」或「從哪天到哪天」。\",\"END_BEFORE_START\":\"結束時間不晚於開始時間。請重新說一次這段時間。\",\"NO_TITLE\":\"時間我知道了，但不確定這是什麼活動。請幫它取個名稱。\",\"NO_START\":\"我還不確定開始時間。請告訴我日期和時間。\",\"NO_END\":\"我還不確定什麼時候結束。可以說「到幾點」或「大概多久」。\",\"SHAPE_INVALID\":\"我讀到的時間格式不完整。請用「幾月幾號幾點」再說一次。\",\"NO_EVENT\":\"我沒有從訊息裡讀出可以建立的行程。請告訴我時間和事由。\",\"ATTACHMENT_FAILED\":\"你傳的圖片我沒有讀到，所以看不出裡面的行程內容。可以直接在本執行緒重傳，或用文字告訴我時間和事由。\"}[$json.clarifyReason] || '我不太確定這個行程的細節，再多給我一點資訊就可以了。')) },\n        fields: [\n          { type: 'mrkdwn', text: '*目前解讀*\\n' + (String($json.title || '').trim()\n            ? String($json.title).slice(0, 150)\n            : '_還沒有標題 — 告訴我這是什麼活動_') },\n          { type: 'mrkdwn', text: '*時間*\\n' + (String($json.displayTime || '').trim()\n            ? String($json.displayTime).slice(0, 80)\n            : (String($json.startDateTime || '').trim()\n              ? String($json.startDateTime).slice(0, 60)\n              : '_還沒有時間 — 告訴我哪一天、幾點_')) }\n        ] },\n      { type: 'section', text: { type: 'mrkdwn',\n        text: String($json.imageTranscript || '').trim()\n          ? '🖼️ *我從圖片讀到*\\n>' + String($json.imageTranscript).slice(0, 600).split('\\n').join('\\n>')\n          : '📝 ' + String($json.reasoning || $json.yearReason || '（無說明）').slice(0, 300) } },\n      { type: 'context', elements: [{ type: 'mrkdwn',\n        text: '直接回覆本執行緒補充即可；資訊夠了就說「就這樣建立」「建立吧」或「幫我建」'\n          + ($json.attachmentNotice ? ' · ⚠ ' + $json.attachmentNotice : '') }]}\n    ]\n  }]\n}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "http-106",
+      "name": "Send Duplicate Notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2650,
+        550
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  channel: $json.channel,\n  thread_ts: $json.threadTs,\n  text: '此事件先前已建立',\n  attachments: [{\n    color: '#868686',\n    blocks: [\n      { type: 'header', text: { type: 'plain_text', text: '\\u2139\\ufe0f \\u4e8b\\u4ef6\\u5df2\\u5b58\\u5728', emoji: true } },\n      { type: 'section', text: { type: 'mrkdwn',\n        text: '\\u672c\\u57f7\\u884c\\u7dd2\\u5df2\\u7d93\\u5efa\\u7acb\\u904e\\u76f8\\u540c\\u7684\\u4e8b\\u4ef6\\uff08*'\n          + ($json.title || '\\u2014') + '*\\uff09\\uff0c\\u4e0d\\u91cd\\u8907\\u5efa\\u7acb\\u3002' } },\n      { type: 'context', elements: [{ type: 'mrkdwn',\n        text: '\\u82e5\\u8981\\u4fee\\u6539\\uff0c\\u8acb\\u76f4\\u63a5\\u8aaa\\u300c\\u6539\\u6210\\u2026\\u300d\\uff1b\\u82e5\\u8981\\u5efa\\u7acb\\u53e6\\u4e00\\u500b\\u4e0d\\u540c\\u7684\\u4e8b\\u4ef6\\uff0c\\u8acb\\u8aaa\\u660e\\u5b8c\\u6574\\u65e5\\u671f\\u8207\\u4e3b\\u984c' }]}\n    ]\n  }]\n}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "http-107",
+      "name": "Send Not Owner Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2650,
+        700
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  channel: $json.channel,\n  thread_ts: $json.threadTs,\n  text: '這個執行緒的行程只有建立者能修改',\n  attachments: [{\n    color: '#7b68ee',\n    blocks: [\n      { type: 'header', text: { type: 'plain_text', text: '🔒 這則行程不是你建立的', emoji: true } },\n      { type: 'section', text: { type: 'mrkdwn',\n        text: '這串對話是 ' + ($json.threadOwner ? '<@' + $json.threadOwner + '>' : '別人') +\n          ' 開的，為了避免誤改到他的行事曆，我只接受由他本人在這裡做修改。' } },\n      { type: 'context', elements: [{ type: 'mrkdwn',\n        text: '想安排自己的行程的話，直接開一則新訊息告訴我時間和事由就可以了，我會幫你建立。' }]}\n    ]\n  }]\n}) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "http-108",
+      "name": "Add Suppress Reaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2650,
+        700
+      ],
+      "onError": "continueRegularOutput",
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/reactions.add",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Slack Message Trigger').first().json.channel, timestamp: $('Slack Message Trigger').first().json.ts, name: 'heavy_minus_sign' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "id": "code-109",
+      "name": "Normalize Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2650,
+        850
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const item = $input.first();\nconst j = (item && item.json) || {};\n\n// 對未執行的節點呼叫 $() 會拋例外，必須逐一保護\nconst pick = (nodeName, key) => {\n  try {\n    const ref = $(nodeName).first();\n    return ref && ref.json ? ref.json[key] : undefined;\n  } catch (e) {\n    console.log('[Normalize Error] 節點 ' + nodeName + ' 未執行，略過取值: ' + e.message);\n    return undefined;\n  }\n};\nconst reached = (nodeName) => {\n  try { return !!$(nodeName).first(); } catch (e) { return false; }\n};\n\nlet triggerEvent = {};\ntry {\n  const t = $('Slack Message Trigger').first();\n  triggerEvent = (t && t.json && (t.json.event || t.json)) || {};\n} catch (e) {\n  console.log('[Normalize Error] trigger 不可讀: ' + e.message);\n}\n\nconst threadTs =\n  pick('Parse AI Response', 'threadTs') ||\n  pick('Collect Thread Context', 'threadTs') ||\n  j.threadTs || j.thread_ts || j.ts ||\n  triggerEvent.thread_ts || triggerEvent.ts || null;\n\nconst channel =\n  pick('Parse AI Response', 'channel') ||\n  pick('Collect Thread Context', 'channel') ||\n  j.channel || triggerEvent.channel || 'C08NVUQUK8F';\n\n// 失敗階段改由 $prevNode.name 判定 —— 那是 n8n 的節點層 metadata，\n// 不像 $('節點名') 需要解析 item 配對，因此在錯誤分支上仍然可靠。\n//\n// 為什麼換掉原本的 reached()：實測 exec #1637 失敗於 Call Azure OpenAI，\n// Build Azure Payload 明明執行過，reached('Build Azure Payload') 仍回 false，\n// 於是 stage 落在預設值「讀取 Slack 對話」，把 AI 失敗說成 Slack 失敗。\n// （注意：同一次執行中 $('Slack Message Trigger') 是成功的，所以問題不是\n//  「錯誤分支不能用 $()」，而是特定節點的 item 配對解析不到。）\nconst STAGE_BY_NODE = {\n  'Fetch Thread Replies': '讀取 Slack 對話',\n  'Collect Thread Context': '整理對話內容',\n  'Should Process': '整理對話內容',\n  'Has Images': '整理對話內容',\n  'Split Images': '處理圖片附件',\n  'Download Image': '下載 Slack 圖片',\n  'Aggregate Images': '處理圖片附件',\n  'Build Azure Payload': '組裝 AI 請求',\n  'Analyze With Azure': '呼叫 AI 解析',\n  'Parse AI Response': '解析 AI 回應',\n  'Route Outcome': '判斷處理方式',\n  'Create Calendar Event': '建立 Google 日曆事件',\n  'Update Calendar Event': '更新 Google 日曆事件',\n  'Send Success Card': '傳送 Slack 通知卡片',\n  'Send Updated Card': '傳送 Slack 通知卡片',\n  'Send Clarify Card': '傳送 Slack 通知卡片',\n  'Send Duplicate Notice': '傳送 Slack 通知卡片',\n  'Send Not Owner Card': '傳送 Slack 通知卡片',\n  'Verify Card Delivery': '傳送 Slack 通知卡片',\n  'Verify Updated Card Delivery': '傳送 Slack 通知卡片',\n  'Verify Notice Delivery': '傳送 Slack 通知卡片',\n};\nlet failedNode = null;\ntry {\n  if (typeof $prevNode !== 'undefined' && $prevNode && $prevNode.name) failedNode = $prevNode.name;\n} catch (e) {\n  console.log('[Normalize Error] $prevNode 不可讀: ' + e.message);\n}\nlet stage = failedNode && STAGE_BY_NODE[failedNode] ? STAGE_BY_NODE[failedNode] : null;\nif (!stage) {\n  // 舊的節點回推法留作退路，若 $prevNode 也取不到才會用到\n  stage = '讀取 Slack 對話';\n  if (reached('Parse AI Response')) stage = '建立／更新 Google 日曆事件';\n  else if (reached('Build Azure Payload')) stage = '呼叫 AI 解析';\n  else if (reached('Collect Thread Context')) stage = '整理對話內容';\n  console.log('[Normalize Error] $prevNode 無法對應階段，退回節點回推法。failedNode=' + JSON.stringify(failedNode));\n}\n\n// 日曆是否已經寫入成功，決定了要給使用者哪一種指示。\n// 若日曆已建立、只是通知卡片沒送出去，卻叫使用者「重試或手動建立」，\n// 使用者照做就會得到兩個重複的事件 —— 錯誤訊息本身造成了它宣稱要避免的問題\n// （rd-json BLOCKING #4）。因此這裡明確回讀日曆節點是否留下 event id。\nconst calendarEventId =\n  pick('Create Calendar Event', 'id') ||\n  pick('Update Calendar Event', 'id') || null;\nconst calendarLink =\n  pick('Create Calendar Event', 'htmlLink') ||\n  pick('Update Calendar Event', 'htmlLink') || null;\n// 日曆是否已寫入，不能只靠 pick() —— 它和 reached() 是同一套 $() 機制，\n// 在錯誤分支上可能取不到值。誤判為 false 的代價很具體：錯誤卡會叫使用者\n// 「重試或手動建立」，使用者照做就會得到兩個重複事件（rd-json BLOCKING #4）。\n// 因此改以「失敗發生在哪一個節點」為主要判準：只要已經走到卡片傳送階段，\n// 日曆必然已經寫入成功，因為卡片節點在日曆節點之後。\nconst FAILED_AFTER_CALENDAR = new Set([\n  'Send Success Card', 'Send Updated Card',\n  'Verify Card Delivery', 'Verify Updated Card Delivery',\n]);\nconst calendarWritten = !!calendarEventId || (!!failedNode && FAILED_AFTER_CALENDAR.has(failedNode));\nif (calendarWritten) stage = '傳送 Slack 通知卡片';\nif (calendarWritten && !calendarEventId) {\n  console.log('[Normalize Error] 依失敗節點判定日曆已寫入，但取不到 event id。failedNode=' + failedNode);\n}\n\n// 錯誤物件的形狀依來源而異，逐一嘗試而非假設單一結構：\n//   HTTP 節點逾時      -> { error: 'connect ETIMEDOUT 1.2.3.4:443' }（error 是字串）\n//   Slack API 失敗     -> { error: 'channel_not_found' }（error 是錯誤碼字串）\n//   n8n 包裝的節點錯誤 -> { error: { message, description, httpCode } }\n//   Google API 失敗    -> { message: '...' } 或 { error: { message } }\n// 舊寫法先做 j.error || {}，字串型的 error 會被當成物件去讀 .message 而得到\n// undefined，最後一路落到 'unknown error' —— 對排查最有用的那一種反而被丟掉。\nconst err = j.error;\nconst candidates = [\n  typeof err === 'string' ? err : null,\n  err && typeof err === 'object' ? err.message : null,\n  j.message,\n  err && typeof err === 'object' ? err.description : null,\n  j.description,\n  typeof j === 'string' ? j : null,\n];\nconst rawMessage = candidates.find((c) => typeof c === 'string' && c.trim()) || 'unknown error';\n\n// 逾時／連線中斷有一個特別惡劣的性質：請求可能已經抵達 Google 並成功建立事件，\n// 只是回應沒回來。此時我們拿不到 event id，calendarWritten 是 false，\n// 但事件其實**可能已經存在**。若照一般錯誤那樣叫使用者「稍後重試或手動建立」，\n// 他照做就會得到兩筆重複事件 —— 錯誤訊息本身製造了它想避免的問題。\n// 所以這種情況必須改口為「先去確認」，而不是「再試一次」。\n// 僅在失敗確實發生在日曆那一步時成立；更早的階段根本還沒碰到 Google。\nconst TIMEOUT_LIKE = /ETIMEDOUT|ESOCKETTIMEDOUT|ECONNRESET|ECONNABORTED|EAI_AGAIN|EPIPE|socket hang up|timed? ?out|network|Bad Gateway|Service Unavailable|Gateway Time|\\b50[234]\\b/i;\nconst uncertainWrite = !calendarWritten\n  && stage === '建立／更新 Google 日曆事件'\n  && TIMEOUT_LIKE.test(String(rawMessage));\n\nreturn [{\n  json: {\n    channel,\n    threadTs,\n    stage,\n    errorMessage: String(rawMessage).slice(0, 400),\n    hasThreadTs: !!threadTs,\n    calendarWritten,\n    calendarEventId,\n    calendarLink,\n    uncertainWrite,\n  },\n}];"
+      }
+    },
+    {
+      "id": "code-110",
+      "name": "Verify Card Delivery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3150,
+        100
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// 用白名單判定：只有明確的 ok===true 才算送達。\n// 原因：Send Success Card 設 onError:'continueRegularOutput'，遇 5xx／連線層硬失敗時\n// n8n 的 HttpRequestV3 會把 { error: msg } 推到 regular 輸出而非 error 輸出，\n// 此時 ok 是 undefined。若寫成 ok === false 就會靜默放行，\n// 而這張卡片的 metadata 是下一輪讀回 event ID 的唯一途徑 —— 漏掉就會重複建立事件。\nconst j = $json || {};\nif (j.ok !== true) {\n  console.log('[E_SLACK_POST] 卡片投遞未確認成功: ' + JSON.stringify({\n    ok: j.ok === undefined ? '(undefined)' : j.ok,\n    error: j.error || null,\n    warning: j.warning || null,\n    response_metadata: j.response_metadata || null,\n  }));\n  throw new Error('[E_SLACK_POST] chat.postMessage 未回報成功: ' + (j.error || 'ok!==true'));\n}\nreturn [{ json: { ok: true, ts: j.ts || null, channel: j.channel || null } }];"
+      }
+    },
+    {
+      "id": "code-111",
+      "name": "Verify Updated Card Delivery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3150,
+        250
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// 用白名單判定：只有明確的 ok===true 才算送達。\n// 原因：Send Success Card 設 onError:'continueRegularOutput'，遇 5xx／連線層硬失敗時\n// n8n 的 HttpRequestV3 會把 { error: msg } 推到 regular 輸出而非 error 輸出，\n// 此時 ok 是 undefined。若寫成 ok === false 就會靜默放行，\n// 而這張卡片的 metadata 是下一輪讀回 event ID 的唯一途徑 —— 漏掉就會重複建立事件。\nconst j = $json || {};\nif (j.ok !== true) {\n  console.log('[E_SLACK_POST] 卡片投遞未確認成功: ' + JSON.stringify({\n    ok: j.ok === undefined ? '(undefined)' : j.ok,\n    error: j.error || null,\n    warning: j.warning || null,\n    response_metadata: j.response_metadata || null,\n  }));\n  throw new Error('[E_SLACK_POST] chat.postMessage 未回報成功: ' + (j.error || 'ok!==true'));\n}\nreturn [{ json: { ok: true, ts: j.ts || null, channel: j.channel || null } }];"
+      }
+    },
+    {
+      "id": "code-112",
+      "name": "Verify Notice Delivery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3150,
+        480
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// 用白名單判定：只有明確的 ok===true 才算送達。\n// 原因：Send Success Card 設 onError:'continueRegularOutput'，遇 5xx／連線層硬失敗時\n// n8n 的 HttpRequestV3 會把 { error: msg } 推到 regular 輸出而非 error 輸出，\n// 此時 ok 是 undefined。若寫成 ok === false 就會靜默放行，\n// 而這張卡片的 metadata 是下一輪讀回 event ID 的唯一途徑 —— 漏掉就會重複建立事件。\nconst j = $json || {};\nif (j.ok !== true) {\n  console.log('[E_SLACK_POST] 卡片投遞未確認成功: ' + JSON.stringify({\n    ok: j.ok === undefined ? '(undefined)' : j.ok,\n    error: j.error || null,\n    warning: j.warning || null,\n    response_metadata: j.response_metadata || null,\n  }));\n  throw new Error('[E_SLACK_POST] chat.postMessage 未回報成功: ' + (j.error || 'ok!==true'));\n}\nreturn [{ json: { ok: true, ts: j.ts || null, channel: j.channel || null } }];"
+      }
+    },
+    {
+      "id": "http-113",
+      "name": "Send Error Card",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2900,
+        850
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.assign({\n  channel: $json.channel,\n  text: ($json.calendarWritten\n    ? '\\u4e8b\\u4ef6\\u5df2\\u5efa\\u7acb\\uff0c\\u4f46\\u901a\\u77e5\\u5361\\u7247\\u50b3\\u9001\\u5931\\u6557'\n    : '\\u8655\\u7406\\u6642\\u767c\\u751f\\u932f\\u8aa4\\uff08' + String($json.stage || 'unknown').slice(0, 80) + '\\uff09'),\n  attachments: [{\n    color: $json.calendarWritten ? '#ecb22e' : '#e01e5a',\n    blocks: [\n      { type: 'header', text: { type: 'plain_text',\n        text: ($json.calendarWritten\n          ? '\\u26a0\\ufe0f \\u4e8b\\u4ef6\\u5df2\\u5efa\\u7acb\\uff0c\\u4f46\\u901a\\u77e5\\u5931\\u6557'\n          : ($json.uncertainWrite\n            ? '\\u26a0\\ufe0f \\u9023\\u7dda\\u903e\\u6642\\uff0c\\u7d50\\u679c\\u672a\\u77e5'\n            : '\\u26a0\\ufe0f \\u8655\\u7406\\u5931\\u6557')), emoji: true } },\n      { type: 'section', text: { type: 'mrkdwn',\n        text: ($json.calendarWritten\n          ? '\\u4f60\\u7684\\u884c\\u4e8b\\u66c6\\u4e8b\\u4ef6*\\u5df2\\u7d93\\u5efa\\u7acb\\u6210\\u529f*\\uff0c\\u53ea\\u662f\\u9019\\u5f35\\u901a\\u77e5\\u5361\\u7247\\u6c92\\u80fd\\u6b63\\u5e38\\u9001\\u51fa\\u3002\\n*\\u8acb\\u52ff\\u91cd\\u8a66* \\u2014 \\u91cd\\u8a66\\u6703\\u5efa\\u7acb\\u7b2c\\u4e8c\\u500b\\u91cd\\u8907\\u4e8b\\u4ef6\\u3002'\n            + ($json.calendarLink ? '\\n\\u003c' + $json.calendarLink + '|\\u5728 Google \\u65e5\\u66c6\\u4e2d\\u67e5\\u770b\\u003e' : '')\n          : ($json.uncertainWrite\n            ? '\\u5beb\\u5165 Google \\u65e5\\u66c6\\u6642\\u9023\\u7dda\\u903e\\u6642\\uff0c*\\u6211\\u7121\\u6cd5\\u78ba\\u5b9a\\u4e8b\\u4ef6\\u662f\\u5426\\u5df2\\u7d93\\u5efa\\u7acb*\\u3002\\n\\u8acb\\u5148\\u5230 Google \\u65e5\\u66c6\\u770b\\u4e00\\u4e0b\\uff1a\\u5df2\\u7d93\\u6709\\u4e86\\u5c31\\u4e0d\\u7528\\u518d\\u505a\\u4efb\\u4f55\\u4e8b\\uff0c\\u6c92\\u6709\\u624d\\u518d\\u56de\\u8986\\u4e00\\u6b21\\u3002'\n            : '\\u5728\\u300c*' + String($json.stage || 'unknown').slice(0, 80) + '*\\u300d\\u9019\\u4e00\\u6b65\\u767c\\u751f\\u932f\\u8aa4\\uff0c\\u672c\\u6b21\\u8a0a\\u606f\\u672a\\u80fd\\u5b8c\\u6210\\u8655\\u7406\\u3002')) } },\n      { type: 'section', text: { type: 'mrkdwn',\n        text: '\\u0060\\u0060\\u0060' + String($json.errorMessage || 'unknown').slice(0, 400) + '\\u0060\\u0060\\u0060' } },\n      { type: 'context', elements: [{ type: 'mrkdwn',\n        text: ($json.calendarWritten\n          ? '\\u82e5\\u9700\\u4fee\\u6539\\u8a72\\u4e8b\\u4ef6\\uff0c\\u8acb\\u76f4\\u63a5\\u5728 Google \\u65e5\\u66c6\\u4e2d\\u8abf\\u6574'\n          : ($json.uncertainWrite\n            ? '\\u78ba\\u8a8d\\u524d\\u8acb\\u52ff\\u91cd\\u8a66 \\u2014 \\u91cd\\u8a66\\u6709\\u53ef\\u80fd\\u5efa\\u7acb\\u7b2c\\u4e8c\\u500b\\u91cd\\u8907\\u4e8b\\u4ef6'\n            : '\\u8acb\\u7a0d\\u5f8c\\u91cd\\u8a66\\uff0c\\u6216\\u76f4\\u63a5\\u5728 Google \\u65e5\\u66c6\\u624b\\u52d5\\u5efa\\u7acb')) }]}\n    ]\n  }]\n}, $json.hasThreadTs ? { thread_ts: $json.threadTs } : {})) }}",
+        "options": {}
+      },
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/reactions.add",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Slack Message Trigger').first().json.channel, timestamp: $('Slack Message Trigger').first().json.ts, name: 'eyes' }) }}",
+        "options": {}
+      },
+      "id": "rx-0",
+      "name": "Add Seen Reaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        300
+      ],
       "credentials": {
         "slackApi": {
           "id": "H8RWtu7aOphSXGk5",
           "name": "Slack account"
         }
       },
-      "id": "d8a44d97-e601-40ea-a28b-cb847da06bcf",
-      "name": "Send Success Notification",
-      "onError": "continueErrorOutput",
-      "parameters": {
-        "blocksUi": "={{ $json.blocks }}",
-        "channelId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "C08NVUQUK8F"
-        },
-        "messageType": "block",
-        "operation": "post",
-        "otherOptions": {},
-        "resource": "message",
-        "select": "channel",
-        "text": "={{ $json.fallbackText }}"
-      },
-      "position": [
-        2064,
-        368
-      ],
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.4,
-      "webhookId": "61ac6b8e-271f-464e-bbb5-5debac9b225f"
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "build-low-confidence-blocks",
-      "name": "Build Low Confidence Blocks",
       "parameters": {
-        "jsCode": "const data = $input.first().json;\n\nconst blocks = [\n  { type: 'header', text: { type: 'plain_text', text: '⚠️ 發現可能的日程，但信心度較低', emoji: true } },\n  { type: 'section', text: { type: 'mrkdwn', text: `📝 *${data.title}*` } },\n  { type: 'section', fields: [\n    { type: 'mrkdwn', text: `*🕐 時間*\\n${data.startDateTime}` },\n    { type: 'mrkdwn', text: `*📍 地點*\\n${data.location || '未指定'}` }\n  ]},\n  { type: 'section', fields: [\n    { type: 'mrkdwn', text: `*📊 AI 信心度*\\n${data.confidenceDisplay} (低信心度)` }\n  ]},\n  { type: 'divider' },\n  { type: 'section', text: { type: 'mrkdwn', text: `💭 *AI 分析*\\n_${data.reasoning}_` } },\n  { type: 'divider' },\n  { type: 'section', text: { type: 'mrkdwn', text: '💡 如需建立日曆事件，請發送更詳細的訊息（包含確切時間、地點等資訊）' } },\n  { type: 'divider' },\n  { type: 'context', elements: [{ type: 'mrkdwn', text: '🤖 此為 AI 助手低信心度提醒，不會自動建立事件' }] }\n];\n\nreturn [{ json: { blocks: JSON.stringify(blocks), fallbackText: `⚠️ 發現可能的日程: ${data.title} (信心度: ${data.confidenceDisplay})` } }];",
-        "mode": "runOnceForAllItems"
+        "method": "POST",
+        "url": "https://slack.com/api/reactions.remove",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Slack Message Trigger').first().json.channel, timestamp: $('Slack Message Trigger').first().json.ts, name: 'eyes' }) }}",
+        "options": {}
       },
+      "id": "rx-1",
+      "name": "Remove Seen Reaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [
-        1504,
+        1680,
+        300
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/reactions.remove",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, timestamp: ($json.message && $json.message.thread_ts) || $json.ts, name: 'eyes' }) }}",
+        "options": {}
+      },
+      "id": "rx-2",
+      "name": "Remove Seen Marker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
         560
       ],
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2
-    },
-    {
       "credentials": {
         "slackApi": {
           "id": "H8RWtu7aOphSXGk5",
           "name": "Slack account"
         }
       },
-      "id": "a19c1160-28c0-4c90-acb2-c0cfff0e2fa9",
-      "name": "Send Low Confidence Alert",
-      "onError": "continueErrorOutput",
-      "parameters": {
-        "blocksUi": "={{ $json.blocks }}",
-        "channelId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "C08NVUQUK8F"
-        },
-        "messageType": "block",
-        "operation": "post",
-        "otherOptions": {},
-        "resource": "message",
-        "select": "channel",
-        "text": "={{ $json.fallbackText }}"
-      },
-      "position": [
-        1728,
-        560
-      ],
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.4,
-      "webhookId": "9d0b3972-5ba9-4bef-9688-0615ff2022d6"
+      "onError": "continueRegularOutput"
     },
     {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/reactions.add",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Slack Message Trigger').first().json.channel, timestamp: $('Slack Message Trigger').first().json.ts, name: 'white_check_mark' }) }}",
+        "options": {}
+      },
+      "id": "rx-3",
+      "name": "Add Success Reaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        -240
+      ],
       "credentials": {
         "slackApi": {
           "id": "H8RWtu7aOphSXGk5",
           "name": "Slack account"
         }
       },
-      "id": "send-no-event-reply",
-      "name": "Send No Event Reply",
-      "parameters": {
-        "channelId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "C08NVUQUK8F"
-        },
-        "messageType": "text",
-        "operation": "post",
-        "otherOptions": {},
-        "resource": "message",
-        "select": "channel",
-        "text": "={{ $json.status === 'error' ? '❌ 處理訊息時發生錯誤\\n\\n💭 *錯誤訊息*: _' + ($json.error || '未知錯誤') + '_\\n\\n💡 請稍後重試，或聯繫管理員。' : 'ℹ️ 此訊息未包含可辨識的日程資訊，未建立日曆事件。\\n\\n💭 *AI 分析*: _' + ($json.reasoning || '無') + '_\\n\\n💡 如需建立日曆事件，請提供明確的日期、時間和活動內容。' }}\\n\\n_🤖 由 AI 助手自動分析_"
-      },
-      "position": [
-        1168,
-        660
-      ],
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.4,
-      "webhookId": "80cdfb45-e914-486c-a0e5-83f4cdf03bb5"
+      "onError": "continueRegularOutput"
     },
     {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/reactions.add",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Slack Message Trigger').first().json.channel, timestamp: $('Slack Message Trigger').first().json.ts, name: 'arrows_counterclockwise' }) }}",
+        "options": {}
+      },
+      "id": "rx-4",
+      "name": "Add Updated Reaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        -40
+      ],
       "credentials": {
         "slackApi": {
           "id": "H8RWtu7aOphSXGk5",
           "name": "Slack account"
         }
       },
-      "id": "send-error-notification",
-      "name": "Send Error Notification",
-      "parameters": {
-        "channelId": {
-          "__rl": true,
-          "mode": "id",
-          "value": "C08NVUQUK8F"
-        },
-        "messageType": "text",
-        "operation": "post",
-        "otherOptions": {},
-        "resource": "message",
-        "select": "channel",
-        "text": "=❌ *Workflow 執行錯誤*\n\n💭 *錯誤訊息*: _{{ $json.error && $json.error.message ? $json.error.message : ($json.message || '未知錯誤') }}_\n\n📋 請檢查 n8n 執行紀錄以取得完整錯誤資訊。\n\n_🤖 由 AI 助手自動通報_"
-      },
-      "position": [
-        1840,
-        760
-      ],
-      "type": "n8n-nodes-base.slack",
-      "typeVersion": 2.4,
-      "webhookId": "ee24ca10-2b45-4fa7-ae5b-675bea554869"
+      "onError": "continueRegularOutput"
     },
     {
-      "id": "8647c7c5-4e06-482e-8fd8-df39c3077d31",
-      "name": "Analyze Message with AI",
-      "onError": "continueErrorOutput",
       "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/reactions.add",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $('Slack Message Trigger').first().json.channel, timestamp: $('Slack Message Trigger').first().json.ts, name: ($('Parse AI Response').first().json.isDuplicate ? 'recycle' : ($('Parse AI Response').first().json.isOwner === false ? 'lock' : 'question')) }) }}",
+        "options": {}
+      },
+      "id": "rx-5",
+      "name": "Add Notice Reaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        160
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/reactions.add",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ channel: $json.channel, timestamp: ($json.message && $json.message.thread_ts) || $json.ts, name: 'warning' }) }}",
+        "options": {}
+      },
+      "id": "rx-6",
+      "name": "Add Alert Reaction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        720
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "H8RWtu7aOphSXGk5",
+          "name": "Slack account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.userText }}",
         "messages": {
           "messageValues": [
             {
-              "message": "=你是一個專業的日程管理助手。請分析用戶的 Slack 訊息，提取可能的日程信息。\n\n🎯 **重要原則：每個分析結果只產生一個主要事件，將所有相關活動整合為完整的活動描述**\n\n⚠️ **非日程訊息處理（最重要）**：\n- 如果訊息完全不包含任何日程、活動、會議、聚會相關內容（例如：問候、閒聊、天氣討論、推薦請求等），**必須**回傳 `hasEvent: false`。\n- 只有在訊息確實提到可辨識的活動/會議/聚會/旅遊等日程相關內容時，才設定 `hasEvent: true`。\n- 不確定時，寧可回傳 `hasEvent: false`，也不要產生空白或無意義的事件。\n\n🔍 **地點偵測規則**：\n1. 移動動詞後的地點：「去XX」、「到XX」、「往XX」、「赴XX」、「前往XX」、「出發到XX」、「飛往XX」\n2. 位置介詞後的地點：「在XX」、「於XX」、「位於XX」、「XX舉行」、「XX進行」、「XX召開」\n3. 地點提取優先順序：具體地址 > 建築名稱 > 城市名稱 > 區域名稱\n4. 多地點活動：選擇主要集合地點或最重要的地點作為主要 location\n\n📅 **活動類型識別**：\n- **全天活動**：旅遊、一日遊、出差、休假、節日慶典、研習營、工作坊、多地點行程（即使有集合時間也算全天）、只提到日期沒有具體時間\n- **定時活動**：單一地點的會議/簡報、有明確開始和結束時間的短時間活動、非旅遊性質的定時聚會\n\n🕐 **當前日期時間基準**：{{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy年MM月dd日 (cccc)', { locale: 'zh-TW' }) }}（台北時間）\n\n⏰ **時間格式規則**：\n- 全天活動：startDateTime 和 endDateTime 都設為 \"YYYY-MM-DD\"，isAllDay: true\n- 定時活動：使用 ISO 8601 格式 \"YYYY-MM-DDTHH:mm:ss+08:00\"，isAllDay: false\n- **年份推斷**：如果訊息中有指定年份就用該年份；如果只有月/日，提到的月份已過去就用下一年，當前月份或之後就用今年。當前日期為 {{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy-MM-dd') }}。若無法推斷，預設使用 {{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy') }} 年。\n- 時區：Asia/Taipei (+08:00)\n- 全天活動的開始和結束時間應該相同，格式為純日期\n\n📋 **描述內容建構**：包含集合資訊、行程安排、費用明細、參與者資訊、攜帶物品、注意事項、相關連結（如訊息中有提及）。\n\n👥 **attendees 欄位請保持空陣列 []**，避免發送 Google Calendar 通知。所有參與者資訊寫在 description 中。\n\n🎯 **信心度評估**：\n- 0.9+：完整時間+地點+詳細行程+參與者\n- 0.7-0.9：明確時間和地點，部分詳細\n- 0.5-0.7：基本時間或地點，缺少詳細\n- <0.5：缺乏關鍵信息\n\n請按照以下 JSON 格式回覆，不要添加任何其他文字：\n{\n  \"hasEvent\": true,\n  \"events\": [\n    {\n      \"title\": \"活動標題\",\n      \"description\": \"詳細描述\",\n      \"startDateTime\": \"YYYY-MM-DD 或 YYYY-MM-DDTHH:mm:ss+08:00\",\n      \"endDateTime\": \"同上\",\n      \"isAllDay\": true,\n      \"location\": \"地點\",\n      \"attendees\": [],\n      \"confidence\": 0.95\n    }\n  ],\n  \"reasoning\": \"分析原因\"\n}\n\n如果沒有日程，回覆：\n{\n  \"hasEvent\": false,\n  \"events\": [],\n  \"reasoning\": \"說明為何沒有日程\"\n}\n\n請分析使用者發送的訊息，直接回覆 JSON 格式，不要包含 ```json 標記。"
+              "type": "SystemMessagePromptTemplate",
+              "messageType": "text",
+              "message": "={{ $json.systemPrompt }}"
+            },
+            {
+              "type": "HumanMessagePromptTemplate",
+              "messageType": "imageUrl",
+              "imageUrl": "={{ $json.img1 }}",
+              "imageDetail": "auto"
+            },
+            {
+              "type": "HumanMessagePromptTemplate",
+              "messageType": "imageUrl",
+              "imageUrl": "={{ $json.img2 }}",
+              "imageDetail": "auto"
+            },
+            {
+              "type": "HumanMessagePromptTemplate",
+              "messageType": "imageUrl",
+              "imageUrl": "={{ $json.img3 }}",
+              "imageDetail": "auto"
+            },
+            {
+              "type": "HumanMessagePromptTemplate",
+              "messageType": "imageUrl",
+              "imageUrl": "={{ $json.img4 }}",
+              "imageDetail": "auto"
             }
           ]
-        },
-        "promptType": "define",
-        "text": "={{ $json.text }}"
-      },
-      "position": [
-        688,
-        464
-      ],
-      "type": "@n8n/n8n-nodes-langchain.chainLlm",
-      "typeVersion": 1.9
-    },
-    {
-      "credentials": {
-        "azureEntraCognitiveServicesOAuth2Api": {
-          "id": "82mlP2DDo7j1VGdC",
-          "name": "Azure Open AI account Entra ID"
         }
       },
-      "id": "2dafdd15-fc8c-468f-ab93-caf25ce29c9f",
-      "name": "Azure OpenAI gpt-5.2",
+      "id": "ai-chain-001",
+      "name": "Analyze With Azure",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        2000,
+        400
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3
+    },
+    {
       "parameters": {
         "authentication": "azureEntraCognitiveServicesOAuth2Api",
         "model": "gpt-5.2",
         "options": {}
       },
-      "position": [
-        768,
-        688
-      ],
+      "id": "ai-model-001",
+      "name": "Azure OpenAI gpt-5.2",
       "type": "@n8n/n8n-nodes-langchain.lmChatAzureOpenAi",
-      "typeVersion": 1
+      "typeVersion": 1,
+      "position": [
+        2000,
+        620
+      ],
+      "credentials": {
+        "azureEntraCognitiveServicesOAuth2Api": {
+          "id": "82mlP2DDo7j1VGdC",
+          "name": "Azure Open AI account Entra ID"
+        }
+      }
     }
   ],
   "pinData": {},
   "connections": {
-    "Analyze Message with AI": {
+    "Slack Message Trigger": {
       "main": [
         [
           {
-            "index": 0,
-            "node": "Parse AI Response",
-            "type": "main"
-          }
-        ],
-        [
-          {
-            "index": 0,
-            "node": "Send Error Notification",
-            "type": "main"
-          }
-        ]
-      ]
-    },
-    "Azure OpenAI gpt-5.2": {
-      "ai_languageModel": [
-        [
-          {
-            "index": 0,
-            "node": "Analyze Message with AI",
-            "type": "ai_languageModel"
-          }
-        ]
-      ]
-    },
-    "Build Low Confidence Blocks": {
-      "main": [
-        [
-          {
-            "index": 0,
-            "node": "Send Low Confidence Alert",
-            "type": "main"
-          }
-        ]
-      ]
-    },
-    "Build Success Blocks": {
-      "main": [
-        [
-          {
-            "index": 0,
-            "node": "Send Success Notification",
-            "type": "main"
-          }
-        ]
-      ]
-    },
-    "Check Confidence Score": {
-      "main": [
-        [
-          {
-            "index": 0,
-            "node": "Create Calendar Event",
-            "type": "main"
-          }
-        ],
-        [
-          {
-            "index": 0,
-            "node": "Build Low Confidence Blocks",
-            "type": "main"
-          }
-        ]
-      ]
-    },
-    "Create Calendar Event": {
-      "main": [
-        [
-          {
-            "index": 0,
-            "node": "Build Success Blocks",
-            "type": "main"
-          }
-        ],
-        [
-          {
-            "index": 0,
-            "node": "Send Error Notification",
-            "type": "main"
+            "node": "Filter Valid Messages",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -516,27 +1133,137 @@
       "main": [
         [
           {
-            "index": 0,
-            "node": "Analyze Message with AI",
-            "type": "main"
+            "node": "Fetch Thread Replies",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Add Seen Reaction",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
     },
-    "Has Valid Event": {
+    "Fetch Thread Replies": {
       "main": [
         [
           {
-            "index": 0,
-            "node": "Check Confidence Score",
-            "type": "main"
+            "node": "Collect Thread Context",
+            "type": "main",
+            "index": 0
           }
         ],
         [
           {
-            "index": 0,
-            "node": "Send No Event Reply",
-            "type": "main"
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Thread Context": {
+      "main": [
+        [
+          {
+            "node": "Should Process",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Process": {
+      "main": [
+        [
+          {
+            "node": "Has Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Images": {
+      "main": [
+        [
+          {
+            "node": "Split Images",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Azure Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Images": {
+      "main": [
+        [
+          {
+            "node": "Download Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Image": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Images": {
+      "main": [
+        [
+          {
+            "node": "Build Azure Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Azure Payload": {
+      "main": [
+        [
+          {
+            "node": "Analyze With Azure",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -545,44 +1272,282 @@
       "main": [
         [
           {
-            "index": 0,
-            "node": "Has Valid Event",
-            "type": "main"
+            "node": "Route Outcome",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Remove Seen Reaction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
     },
-    "Send Low Confidence Alert": {
+    "Route Outcome": {
       "main": [
-        [],
         [
           {
-            "index": 0,
-            "node": "Send Error Notification",
-            "type": "main"
+            "node": "Add Suppress Reaction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Not Owner Card",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Clarify Card",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Duplicate Notice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Clarify Card",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
     },
-    "Send Success Notification": {
+    "Create Calendar Event": {
       "main": [
-        [],
         [
           {
-            "index": 0,
-            "node": "Send Error Notification",
-            "type": "main"
+            "node": "Send Success Card",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
     },
-    "Slack Message Trigger": {
+    "Update Calendar Event": {
       "main": [
         [
           {
-            "index": 0,
-            "node": "Filter Valid Messages",
-            "type": "main"
+            "node": "Send Updated Card",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Success Card": {
+      "main": [
+        [
+          {
+            "node": "Verify Card Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Card Delivery": {
+      "main": [
+        [
+          {
+            "node": "Add Success Reaction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Updated Card": {
+      "main": [
+        [
+          {
+            "node": "Verify Updated Card Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Updated Card Delivery": {
+      "main": [
+        [
+          {
+            "node": "Add Updated Reaction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Clarify Card": {
+      "main": [
+        [
+          {
+            "node": "Verify Notice Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Duplicate Notice": {
+      "main": [
+        [
+          {
+            "node": "Verify Notice Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Not Owner Card": {
+      "main": [
+        [
+          {
+            "node": "Verify Notice Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Notice Delivery": {
+      "main": [
+        [
+          {
+            "node": "Add Notice Reaction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Error": {
+      "main": [
+        [
+          {
+            "node": "Send Error Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Error Card": {
+      "main": [
+        [
+          {
+            "node": "Remove Seen Marker",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Add Alert Reaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze With Azure": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Normalize Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Azure OpenAI gpt-5.2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Analyze With Azure",
+            "type": "ai_languageModel",
+            "index": 0
           }
         ]
       ]
@@ -601,10 +1566,9 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "versionId": "375084f7-d6d7-437a-8e0f-fbbc643411d0",
+  "versionId": "ead1045b-d490-4b3a-865c-9bb44b9ef5dd",
   "meta": {
-    "templateCredsSetupCompleted": true,
-    "instanceId": "4f325a7cd315a1a79ed49dc0c3f91bbcfea6ece3018280e4ffc9f22ce531b657"
+    "templateCredsSetupCompleted": true
   },
   "id": "I2dch7ZKvBvX6GVC",
   "tags": []
