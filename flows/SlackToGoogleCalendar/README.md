@@ -8,8 +8,8 @@
 |---|---|
 | Workflow name | `Slack to Google Calendar AI Assistant` |
 | Workflow ID | `I2dch7ZKvBvX6GVC` |
-| Nodes / connections | 35 / 49 |
-| Code nodes | 9 |
+| Nodes / connections | 37 / 54 |
+| Code nodes | 10 |
 | State | active |
 | Timezone | `Asia/Taipei` |
 
@@ -89,9 +89,9 @@ Six semantically distinct cards. Each send is followed by a delivery check, beca
 | `Send Clarify Card` | `httpRequest` v4.2 | continueRegularOutput | 0→Verify Notice Delivery |
 | `Send Duplicate Notice` | `httpRequest` v4.2 | continueRegularOutput | 0→Verify Notice Delivery |
 | `Send Not Owner Card` | `httpRequest` v4.2 | continueRegularOutput | 0→Verify Notice Delivery |
-| `Verify Card Delivery` | `code` v2 | continueErrorOutput | 0→Add Success Reaction<br>1→Normalize Error |
-| `Verify Updated Card Delivery` | `code` v2 | continueErrorOutput | 0→Add Updated Reaction<br>1→Normalize Error |
-| `Verify Notice Delivery` | `code` v2 | continueErrorOutput | 0→Add Notice Reaction<br>1→Normalize Error |
+| `Verify Card Delivery` | `code` v2 | continueErrorOutput | 0→Add Success Reaction / Compute Anchor Status<br>1→Normalize Error |
+| `Verify Updated Card Delivery` | `code` v2 | continueErrorOutput | 0→Add Updated Reaction / Compute Anchor Status<br>1→Normalize Error |
+| `Verify Notice Delivery` | `code` v2 | continueErrorOutput | 0→Add Notice Reaction / Compute Anchor Status<br>1→Normalize Error |
 
 ### Outcome reactions
 
@@ -103,6 +103,8 @@ The 👀 marker is replaced by an emoji describing the outcome, so the message i
 | `Add Updated Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
 | `Add Notice Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
 | `Add Suppress Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
+| `Compute Anchor Status` | `code` v2 | — | 0→Sync Anchor Reaction |
+| `Sync Anchor Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
 
 ### Error handling
 
@@ -111,7 +113,7 @@ Every fallible node routes its error output to one place. The failing stage is d
 | Node | Type | onError | Outputs |
 |---|---|---|---|
 | `Normalize Error` | `code` v2 | — | 0→Send Error Card |
-| `Send Error Card` | `httpRequest` v4.2 | continueRegularOutput | 0→Remove Seen Marker / Add Alert Reaction |
+| `Send Error Card` | `httpRequest` v4.2 | continueRegularOutput | 0→Remove Seen Marker / Add Alert Reaction / Compute Anchor Status |
 | `Remove Seen Marker` | `httpRequest` v4.2 | continueRegularOutput | — |
 | `Add Alert Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
 
@@ -164,7 +166,7 @@ Every reaction node sets `onError: continueRegularOutput`. Reactions are cosmeti
 
 | Type | Name | Nodes using it |
 |---|---|---|
-| `slackApi` | Slack account | 17 |
+| `slackApi` | Slack account | 18 |
 | `googleCalendarOAuth2Api` | Google Calendar account | 2 |
 | `azureEntraCognitiveServicesOAuth2Api` | Azure Open AI account Entra ID | 1 |
 

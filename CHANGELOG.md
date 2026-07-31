@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## [1.0.9] - 2026-07-31
+
+### Fixes
+- **The reaction on a channel message no longer gets stuck on a stale outcome.** Reported against a real thread: 「明天回家」 was answered with ❓ (needs clarification), the user replied 「就這樣建立」 in the thread, the event was created and ✅ appeared — but on the *reply*. The channel list only shows a thread's first message, so it sat on ❓ indefinitely and looked unresolved.
+  - Root cause: every outcome reaction targets `$('Slack Message Trigger').first().json.ts`, i.e. the message that triggered *that* turn, and nothing ever removes an earlier outcome. Proven from executions `#1883` (`ts` = anchor, no `thread_ts`, → `Send Clarify Card` → ❓ on the anchor) and `#1885` (`thread_ts` = anchor, → `Create Calendar Event` → ✅ on the reply). The two reactions landed on two different messages.
+  - The workflow was already inconsistent about this: `Add Alert Reaction` and `Remove Seen Marker` targeted the thread anchor while the success, updated and notice reactions targeted the triggering message.
+  - Fix: two new nodes, `Compute Anchor Status` (Code, `runOnceForAllItems`) and `Sync Anchor Reaction` (one HTTP node whose URL is `reactions.{{ $json.op }}`, since add and remove take identical parameters). They are fed by the three `Verify * Delivery` nodes and `Send Error Card`, and keep the **anchor** message showing the thread's current state: stale status reactions are removed, the current one is added.
+  - **The existing eight reaction nodes were not touched.** The change is purely additive, so per-message feedback — 👀 on the message you just sent, then its own outcome — behaves exactly as before and cannot regress.
+  - `Collect Thread Context` now exports `anchorBotReactions`: which of the seven status emoji the bot itself has on the anchor, read from the thread data already fetched. `eyes` is deliberately excluded, being a transient marker owned by `Add`/`Remove Seen Reaction`. Knowing the exact set avoids firing `reactions.remove` blindly for all seven — that endpoint is Slack Tier 2, 20 requests per minute.
+
+### Design decisions worth knowing
+- **A per-message outcome is not the same thing as the thread's state.** `recycle` (duplicate) is only reachable *because* the thread already holds the event, so on the anchor it resolves to ✅; and `lock` (someone other than the thread owner spoke) leaves the anchor completely alone. Without this mapping the first live run turned a thread whose event had been created into ♻ — a more misleading channel signal than the bug being fixed. Verified: execution `#1918` mapped duplicate → ✅, and `#1922` (not the owner) produced 0 items and left `["white_check_mark"]` untouched.
+- **`Add Suppress Reaction` (➖) is deliberately not wired into the anchor sync.** ➖ judges one message. Syncing it would mean that saying "thanks" in a thread whose event was already created erases the ✅.
+- **The removal list always excludes the emoji about to be added**, so two consecutive turns with the same outcome cannot remove and re-add the same reaction with the result depending on execution order.
+- `runOnceForAllItems`: one message can create up to five events and five cards, but a thread has one status, so the anchor sync does not multiply with the fan-out.
+
+### Notes on getting there
+- The first implementation returned 0 items in production (`#1908`): `$('Collect Thread Context').first()` does not resolve from this position, the same item-pairing limitation recorded for `Normalize Error` in 1.0.6. The anchor identity now comes from `$('Slack Message Trigger').first().json` — proven to resolve in the very same execution by the sibling node `Add Success Reaction` — and `anchorBotReactions` is carried forward on the `Verify *` node output rather than read backwards. `$('Parse AI Response')` *does* resolve from those nodes (`#1913` derived `recycle` through it) and `Parse AI Response` spreads `...ctx`, so the value is available there. A bounded fallback to the full status vocabulary remains for the error path, which carries neither field.
+- Production is **37 nodes / 54 connections**; MCP strict reports `valid: true`, `errorCount: 0`, `invalidConnections: 0`. Both READMEs regenerated, 37/37 coverage in each language.
+- All test artefacts were removed: four bot cards, one calendar event, and the throwaway workflows used to post and clean up. The reported thread's anchor now carries ✅.
+
 ## [1.0.8] - 2026-07-30
 
 ### Fixes

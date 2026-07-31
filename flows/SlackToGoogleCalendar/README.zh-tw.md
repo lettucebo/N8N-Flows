@@ -8,8 +8,8 @@
 |---|---|
 | 工作流程名稱 | `Slack to Google Calendar AI Assistant` |
 | 工作流程 ID | `I2dch7ZKvBvX6GVC` |
-| 節點數 / 連線數 | 35 / 49 |
-| Code 節點 | 9 |
+| 節點數 / 連線數 | 37 / 54 |
+| Code 節點 | 10 |
 | 狀態 | 啟用中 |
 | 時區 | `Asia/Taipei` |
 
@@ -89,9 +89,9 @@ Slack 訊息進來，先濾掉明顯不需要處理的，然後**立刻**加上 
 | `Send Clarify Card` | `httpRequest` v4.2 | continueRegularOutput | 0→Verify Notice Delivery |
 | `Send Duplicate Notice` | `httpRequest` v4.2 | continueRegularOutput | 0→Verify Notice Delivery |
 | `Send Not Owner Card` | `httpRequest` v4.2 | continueRegularOutput | 0→Verify Notice Delivery |
-| `Verify Card Delivery` | `code` v2 | continueErrorOutput | 0→Add Success Reaction<br>1→Normalize Error |
-| `Verify Updated Card Delivery` | `code` v2 | continueErrorOutput | 0→Add Updated Reaction<br>1→Normalize Error |
-| `Verify Notice Delivery` | `code` v2 | continueErrorOutput | 0→Add Notice Reaction<br>1→Normalize Error |
+| `Verify Card Delivery` | `code` v2 | continueErrorOutput | 0→Add Success Reaction / Compute Anchor Status<br>1→Normalize Error |
+| `Verify Updated Card Delivery` | `code` v2 | continueErrorOutput | 0→Add Updated Reaction / Compute Anchor Status<br>1→Normalize Error |
+| `Verify Notice Delivery` | `code` v2 | continueErrorOutput | 0→Add Notice Reaction / Compute Anchor Status<br>1→Normalize Error |
 
 ### 結局 reaction
 
@@ -103,6 +103,8 @@ Slack 訊息進來，先濾掉明顯不需要處理的，然後**立刻**加上 
 | `Add Updated Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
 | `Add Notice Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
 | `Add Suppress Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
+| `Compute Anchor Status` | `code` v2 | — | 0→Sync Anchor Reaction |
+| `Sync Anchor Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
 
 ### 錯誤處理
 
@@ -111,7 +113,7 @@ Slack 訊息進來，先濾掉明顯不需要處理的，然後**立刻**加上 
 | 節點 | 型別 | onError | 輸出 |
 |---|---|---|---|
 | `Normalize Error` | `code` v2 | — | 0→Send Error Card |
-| `Send Error Card` | `httpRequest` v4.2 | continueRegularOutput | 0→Remove Seen Marker / Add Alert Reaction |
+| `Send Error Card` | `httpRequest` v4.2 | continueRegularOutput | 0→Remove Seen Marker / Add Alert Reaction / Compute Anchor Status |
 | `Remove Seen Marker` | `httpRequest` v4.2 | continueRegularOutput | — |
 | `Add Alert Reaction` | `httpRequest` v4.2 | continueRegularOutput | — |
 
@@ -164,7 +166,7 @@ Slack 訊息進來，先濾掉明顯不需要處理的，然後**立刻**加上 
 
 | 型別 | 名稱 | 使用節點數 |
 |---|---|---|
-| `slackApi` | Slack account | 17 |
+| `slackApi` | Slack account | 18 |
 | `googleCalendarOAuth2Api` | Google Calendar account | 2 |
 | `azureEntraCognitiveServicesOAuth2Api` | Azure Open AI account Entra ID | 1 |
 
