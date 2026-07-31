@@ -2,9 +2,9 @@
 
 ## Overview
 
-n8n workflow automation repository. All workflows are stored as JSON files under `flows/` and managed via n8n MCP tools + Git.
+n8n workflow automation repository. All workflows are stored as JSON files under `flows/` and managed via the n8n API + Git. Read [Talking to the instance](#talking-to-the-instance) first — which tools actually work is the thing most likely to waste your time here.
 
-- **Instance**: self-hosted n8n at `https://n8n.yu.money`, running as one service on a shared Azure VM — read [Hosting & Operations](#hosting--operations) before running anything on the host or reasoning about why a workflow behaves differently there than the JSON suggests. MCP servers are configured in `.mcp.json` (repo root, read by Copilot CLI). Version verified on the box on 2026-07-29 is **2.32.5**; the `1.93.0` in `flows/RaindropKnowledgeManagement/README.md` is from 2025-05 and stale. Re-confirm via MCP rather than trusting any number in a doc — including this one.
+- **Instance**: self-hosted n8n at `https://n8n.yu.money`, running as one service on a shared Azure VM — read [Hosting & Operations](#hosting--operations) before running anything on the host or reasoning about why a workflow behaves differently there than the JSON suggests. MCP servers are declared in `.mcp.json` at the repo root and are loaded by Copilot CLI, but see [Talking to the instance](#talking-to-the-instance) for which of their tools actually authenticate. Version verified on the box on 2026-07-29 is **2.32.5**; the `1.93.0` in `flows/RaindropKnowledgeManagement/README.md` is from 2025-05 and stale. Re-confirm against the instance rather than trusting any number in a doc — including this one.
 - **Primary Timezone**: Asia/Taipei
 - **Language**: workflow names in English; node names in English for new work (legacy flows use zh-TW — see [Node Naming](#node-naming)); AI prompts, Slack messages, and `console.log` output in Traditional Chinese (zh-TW)
 - **No build system**: no `package.json`, no CI, no test runner. The JSON files are data, not code — "correctness" means the n8n instance accepts and runs them. See [Local Checks](#local-checks).
@@ -41,7 +41,7 @@ Every `flows/**/*.json` has exactly these top-level keys, in this order:
 
 ### Reference implementation
 
-`flows/SlackToGoogleCalendar/Slack_to_Google_Calendar_AI_Assistant.json` is the most current workflow and the one to copy patterns from (English node names, IF v2.3, Slack v2.4, error outputs, Block Kit notifications, full `settings` block). The other three flows predate those conventions — see [Known drift](#known-drift).
+`flows/SlackToGoogleCalendar/Slack_to_Google_Calendar_AI_Assistant.json` is the most current workflow and the one to copy patterns from: English node names, IF v2.3, Switch v3.2, raw `httpRequest` for all Slack calls, `onError` routing into a single error sink, per-item delivery verification, the reaction lifecycle, and the full `settings` block. The other three flows predate all of it — see [Known drift](#known-drift). Its [Cross-Node Contracts](#cross-node-contracts) are the part that most needs preserving.
 
 ### Workflow inventory
 
@@ -49,12 +49,14 @@ Snapshot — re-read the JSON or query MCP before relying on any count or versio
 
 | Folder | Trigger → Sink | Notes |
 |---|---|---|
-| `SlackToGoogleCalendar` | Slack trigger → Azure OpenAI → Google Calendar → Slack | 14 nodes; the reference flow |
+| `SlackToGoogleCalendar` | Slack trigger → Azure OpenAI → Google Calendar → Slack | **37 nodes / 54 connections**; the reference flow. Thread context, vision, reaction lifecycle, multi-event fan-out, anchor status sync. Every Slack call is an `httpRequest` node — it does not use the Slack node at all |
 | `RaindropKnowledgeManagement` | Schedule (30 min) → Raindrop → Azure AI → Notion | 11 nodes; IF/Merge branch for "AI vs basic analysis". The schedule interval and the dedupe window in `篩選新項目` are coupled: the window is `interval + 5` minutes. Change one, change the other. Also `perpage: 10` on the Raindrop request. |
 | `JenDailyScheduleAlert` | Schedule → Google Sheets → Slack | 4 nodes, linear; does its own Taipei/Calgary offset + DST math in the Code node |
 | `DailyCurrencyExchangeRateAlert` | Schedule → HTTP → Slack | 4 nodes, linear; the only flow that authenticates via an n8n env var (`{{$env.EXCHANGE_API_KEY}}`) instead of a credential. **Currently broken** — `$env` access is denied at runtime, so every scheduled run has failed since 2026-07-16; see [Environment facts](#environment-facts-that-constrain-workflow-authoring) |
 
-**The instance holds more workflows than this repo does.** As of 2026-07-29 the live database has **6** workflows and **12** credentials; `Github flow backup` and `Spotify Weekly Backup Schedule` exist only on the instance and have never been exported here. Only two are active — `Daily Currency Exchange Rate Alert` and `Slack to Google Calendar AI Assistant`. When auditing "all workflows", query MCP; `flows/` is not the full set, and a repo-only audit will miss a third of them.
+**The instance holds more workflows than this repo does.** As of 2026-07-31 the live database has **7** workflows and **12** credentials. `Github flow backup`, `Spotify Weekly Backup Schedule` and `Slack to Google Calendar AI Assistant (v2 TEST)` (`RJiCNKlVQ4EhVyMS`, an inactive copy kept as a rollback reference) exist only on the instance and have never been exported here. When auditing "all workflows", query the API; `flows/` is not the full set.
+
+**`active` in the exported JSON is not trustworthy.** All four local files say `"active": true`, but only **two** workflows are actually active on the instance: `Daily Currency Exchange Rate Alert` and `Slack to Google Calendar AI Assistant`. The flag is a snapshot from whenever the file was last synced. Check the instance, not the file.
 
 ## Hosting & Operations
 
@@ -214,39 +216,98 @@ Get-ChildItem flows -Recurse -Filter *.json | ForEach-Object { "== $($_.Director
 
 It matches on literal node names, so it only means something when node names are English — which is the naming contract above. `RaindropKnowledgeManagement` reports `1/11` for its English README because that flow's nodes are named in Chinese and the English doc translates them; that is a pre-existing naming-contract violation, not a false positive to suppress.
 
-**3. Authoritative check** — `mcp_n8n-mcp_n8n_validate_workflow` with `profile: "strict"` against the live workflow. Local JSON parsing cannot catch bad node parameters; only MCP validation can. Always read files with `-Encoding UTF8` — every workflow contains zh-TW text and emoji.
+**3. Authoritative check** — the MCP `validate_workflow` tool with `profile: "strict"`, passing the workflow JSON inline. Local JSON parsing cannot catch bad node parameters; only this can. Use `validate_workflow` (takes the JSON) rather than `n8n_validate_workflow` (takes an ID and needs API auth — see [Talking to the instance](#talking-to-the-instance)). Always read files with `-Encoding UTF8` — every workflow contains zh-TW text and emoji.
 
-There is no automated way to test behaviour. The only functional test is triggering the workflow on the live instance and reading the execution.
+Expect ~30 warnings on `SlackToGoogleCalendar` (`Hardcoded nodeCredentialType detected`, `Code nodes can throw errors`). Those are inherent to the raw-HTTP Slack pattern and are not actionable. Only `errorCount` matters.
+
+There is no automated way to test behaviour. See [Exercising a workflow](#exercising-a-workflow).
+
+### Exercising a workflow
+
+The only functional test is running it on the live instance and reading the execution. Three techniques this repo relies on:
+
+**Synthetic webhook replay.** Slack event delivery to this instance is unreliable — messages posted in the client are sometimes visible yet generate no `event_callback`, and the bot's own `conversations.history` may not return them. POSTing a hand-built `event_callback` to the production webhook exercises everything downstream of the trigger and is far more dependable:
+
+```javascript
+POST https://n8n.yu.money/webhook/<path>/webhook
+{ type: 'event_callback', team_id, api_app_id,
+  event: { type: 'message', channel, user, text, ts, event_ts, thread_ts, channel_type: 'channel' } }
+```
+
+`ts` must be a **real** message timestamp, because reaction calls target it. Include `thread_ts` when simulating a thread reply — omitting it makes the workflow treat the reply as a new top-level message and the anchor logic silently tests nothing.
+
+**Reading the result.** `GET /executions?limit=&workflowId=` then `GET /executions/{id}?includeData=true`. `data.resultData.runData` is keyed by node name; per-branch item counts live at `runData[name][run].data.main[branch].length`. A node that ran but emitted nothing shows `main: [[]]` — that is how you tell "did not run" from "returned zero items", and the two have very different causes.
+
+**A throwaway workflow for API calls.** Credential secrets are not readable through the Public API, so to call Slack or Google with the *production* credential, `POST /workflows` a small webhook-triggered workflow that reuses the same `credentials` object copied from a production node, activate it, call it, then deactivate and `DELETE` it. This is how test messages get posted and how test calendar events and cards get cleaned up afterwards. Always clean up: the calendar and the Slack channel are real.
+
+Beware routing guards when constructing a test. Reaching the `create` branch requires `isOwner` (the thread's first message must be authored by the person whose id you put in the event) and `!isDuplicate` (the thread must not already contain that event). Scan past executions for a thread where `isOwner` was already observed true rather than guessing.
 
 ## n8n Workflow Development
 
-### MCP-First Workflow
+### Talking to the instance
 
-Always use n8n MCP tools for workflow operations:
+**The n8n MCP tools are only half-usable here, and the failure is silent.** Verified 2026-07-31.
 
-1. **Read**: `mcp_n8n-mcp_n8n_get_workflow` (mode: structure/details)
-2. **Validate**: `mcp_n8n-mcp_n8n_validate_workflow` (profile: strict)
-3. **Update**: prefer `mcp_n8n-mcp_n8n_update_partial_workflow` — it has dedicated operations for `addNode`, `removeNode`, `addConnection`, `removeConnection`, `rewireConnection`, and `replaceConnections` (see `.github/skills/n8n-mcp-tools-expert/WORKFLOW_GUIDE.md`), so structural edits do not require a full replace. Use `mcp_n8n-mcp_n8n_update_full_workflow` only when deliberately replacing a whole workflow.
-4. **Sync local**: After cloud update, always sync cloud → local JSON
+`.mcp.json` passes `"N8N_API_KEY": "${N8N_API_KEY}"`, and **nothing expands that placeholder** — neither Copilot CLI nor the n8n-mcp server. The literal string `${N8N_API_KEY}` is sent as the API key. `N8N_API_KEY` is not set in the shell either, so there is nothing to expand from.
+
+The result splits cleanly in two:
+
+| Tool group | Status | Examples |
+|---|---|---|
+| **Documentation tools** — never touch the instance | **work** | `search_nodes`, `get_node`, `validate_node`, `validate_workflow` (takes workflow JSON), `search_templates`, `get_template`, `tools_documentation` |
+| **Management tools** — call the n8n API | **fail: `AUTHENTICATION_ERROR`** | `n8n_list_workflows`, `n8n_get_workflow`, `n8n_update_partial_workflow`, `n8n_update_full_workflow`, `n8n_executions`, `n8n_validate_workflow` (takes an ID), `n8n_manage_credentials`, … |
+
+**`n8n_health_check` lies.** It reports `"connected": true` and `"N8N_API_KEY": "***configured***"` while every management call fails. Do not use it to decide whether the API works — make a real call such as `n8n_list_workflows`.
+
+To make the management tools work, export the real key into the environment **before** launching Copilot CLI, so the placeholder has something to resolve to:
+
+```powershell
+$env:N8N_API_KEY = '<key>'   # never commit it; this repo is public
+```
+
+Until then, drive the instance through its Public REST API from a script:
+
+```javascript
+const BASE = 'https://n8n.yu.money/api/v1';
+const H = { 'X-N8N-API-KEY': KEY, accept: 'application/json', 'content-type': 'application/json' };
+// GET /workflows, GET /workflows/{id}, PUT /workflows/{id},
+// GET /executions?limit=&workflowId=&status=, GET /executions/{id}?includeData=true
+```
+
+Two API quirks that will bite:
+
+- `PUT /workflows/{id}` **rejects `settings.binaryMode`** even though `GET` returns it. Strip it from the payload or the update 400s.
+- `PUT` takes only `{ name, nodes, connections, settings }`. Sending `id`, `active`, `versionId` or `tags` is rejected.
+
+### Workflow operations
+
+1. **Read**: `GET /workflows/{id}` (or `n8n_get_workflow` once the key resolves)
+2. **Validate**: pass the workflow JSON to the MCP `validate_workflow` tool with `profile: "strict"` — this one works today because it takes the JSON inline rather than fetching by ID
+3. **Update**: `PUT /workflows/{id}` with the four accepted keys. Prefer `n8n_update_partial_workflow` once auth works — it has dedicated `addNode`, `removeNode`, `addConnection`, `removeConnection`, `rewireConnection` and `replaceConnections` operations (see `.github/skills/n8n-mcp-tools-expert/WORKFLOW_GUIDE.md`), so structural edits do not require a full replace
+4. **Sync local**: after every cloud update, sync cloud → local JSON (see [Cloud ↔ Local Sync](#cloud--local-sync))
+
+**Write deployment scripts that assert their preconditions before mutating.** The established pattern in this repo is a `must(condition, message)` helper that throws if an expected substring is missing, plus `new Function(code)` as a syntax gate before pushing a Code node. A `PUT` that half-applies because an anchor string moved is far more expensive than a script that refuses to run.
 
 ### Node Naming
 
-- Use descriptive English names (e.g., `Parse AI Response`, `Check Confidence Score`)
+- Use descriptive English names (e.g., `Parse AI Response`, `Compute Anchor Status`, `Verify Card Delivery`)
 - Never use default names like `IF`, `Code`, `HTTP Request1`
 - **Legacy exception**: `DailyCurrencyExchangeRateAlert`, `JenDailyScheduleAlert`, and most of `RaindropKnowledgeManagement` still use zh-TW node names (`取得即時匯率`, `處理排班資料`). Do not mass-rename them — a rename breaks `connections` keys, `$('Node Name')` lookups, and stored execution history. Rename only when already restructuring that node, and update every reference.
 
 ### Node Versions
 
-Currently observed across the repo (not all in one workflow) — treat as the floor for new work, and confirm against MCP before assuming a version is still current. The instance jumped 2.14.2 → 2.32.5 on 2026-07-29, so several of these almost certainly have newer `typeVersion`s available now; the table records what the files contain, not what the instance supports.
+Currently observed across the repo (not all in one workflow) — treat as the floor for new work, and confirm with the MCP `get_node` tool (which works) before assuming a version is still current. The instance jumped 2.14.2 → 2.32.5 on 2026-07-29, so several of these almost certainly have newer `typeVersion`s available now; the table records what the files contain, not what the instance supports.
 
-| Node Type | Version in repo |
+| Node Type | Version(s) in repo |
 |-----------|---------------|
 | Schedule Trigger | 1.1 |
-| HTTP Request | 4.1 |
+| HTTP Request | 4.1 (legacy flows), **4.2** (SlackToGoogleCalendar) |
 | Code | 2 |
-| IF | 2.3 |
+| IF | 2 (Raindrop), **2.3** (SlackToGoogleCalendar) |
+| Switch | 3.2 |
 | Merge | 2.1 |
-| Slack | 2.4 |
+| Aggregate | 1 |
+| Slack | 1 — legacy alert flows only |
 | Slack Trigger | 1 |
 | Google Calendar | 1.3 |
 | Google Sheets | 4 |
@@ -258,10 +319,10 @@ Currently observed across the repo (not all in one workflow) — treat as the fl
 
 Do not assume the repo is uniform. Currently:
 
-- Slack nodes are v1 in `DailyCurrencyExchangeRateAlert` and `JenDailyScheduleAlert` (plain `"channel": "#n8n-currency"` + `text`), v2.4 only in `SlackToGoogleCalendar` (`resource`/`operation`/`select` + `channelId` resource locator). **New workflows use the v2.4 shape**; do not copy the v1 nodes forward.
-- IF is v2 in `RaindropKnowledgeManagement`, v2.3 in `SlackToGoogleCalendar`.
+- **The Slack node exists only at v1, in `DailyCurrencyExchangeRateAlert` and `JenDailyScheduleAlert`** (plain `"channel": "#n8n-currency"` + `text`). `SlackToGoogleCalendar` does **not** use the Slack node at all — every Slack interaction is a raw `httpRequest` node against `chat.postMessage`, `conversations.replies`, `reactions.add` and `reactions.remove` with `authentication: predefinedCredentialType` + `nodeCredentialType: slackApi`. That is the pattern to copy: the node cannot express message `metadata`, reaction removal, or `include_all_metadata`, all of which this flow depends on.
+- IF is v2 in `RaindropKnowledgeManagement`, v2.3 in `SlackToGoogleCalendar`. Only `SlackToGoogleCalendar` uses Switch (v3.2) and Aggregate.
 - Only `SlackToGoogleCalendar` carries a full `settings` block: `saveExecutionProgress`, `saveManualExecutions`, `saveDataErrorExecution: "all"`, `saveDataSuccessExecution: "all"`, `executionTimeout: 3600`, `timezone: "Asia/Taipei"`, `executionOrder: "v1"`, `binaryMode: "separate"`, `callerPolicy: "workflowsFromSameOwner"`, `availableInMCP: false`. The other three only have `{"executionOrder": "v1"}`. Copy the reference flow's block verbatim for new or substantially reworked workflows rather than retyping it.
-- Only `SlackToGoogleCalendar` and `RaindropKnowledgeManagement` have README pairs, and **`flows/SlackToGoogleCalendar/README.md` is stale** — it documents a `Webhook` trigger, an `AI Message Analyzer` node, and `Function` nodes that no longer exist. Read the JSON, never the README, to learn what a workflow actually does.
+- Only `SlackToGoogleCalendar` and `RaindropKnowledgeManagement` have README pairs. `flows/SlackToGoogleCalendar/README.*` are now generated from the live workflow and are accurate (37/37 node coverage); `RaindropKnowledgeManagement`'s are hand-written and older. Prefer the JSON when the two disagree.
 - Bumping a node's `typeVersion` is a behavioural change, not a cleanup. Bump only when you are also validating and testing that workflow.
 
 ### Code Node Conventions
@@ -273,14 +334,33 @@ Target for new and reworked Code nodes:
 - Parameter: `jsCode` + explicit `mode: "runOnceForAllItems"`. The two legacy alert flows omit `mode` entirely and return a bare `{ json: { ... } }` object instead of an array — that still runs, but new code should use the explicit form.
 - Return format: `[{ json: { ... } }]`
 - Every `catch` block must have `console.log` with error details — never silently swallow errors
-- Reference other nodes with `$('Node Name').first().json`
+- Reference other nodes with `$('Node Name').first().json` — but read [Data flow between nodes](#data-flow-between-nodes) first; this is the single most common way a change here fails silently
 - Code nodes run real JS: optional chaining (`?.`), `try/catch`, and array methods are used throughout `Parse AI Response` and `篩選新項目`. The `?.` restriction below applies to `{{ }}` expressions, not here.
 - Luxon `DateTime` is available without import. zh-TW output uses the locale option: `DateTime.fromISO(v).setZone('Asia/Taipei').toFormat('MM月dd日 (cccc) HH:mm', { locale: 'zh-TW' })`
 - Degrade, don't throw. The house style on bad input in `SlackToGoogleCalendar` is to `console.log` and return a status item (`{ status: 'error', error: '...' }`) so downstream IF nodes can route it, rather than failing the execution.
+- **Never `return []` from a node on the happy path.** An empty array ends that branch with no error and no output, so every downstream node is skipped and the user simply never gets a reply. When there is genuinely nothing to emit, return one item that downstream routing can recognise (`Parse AI Response` emits a clarify item when every event fails to parse).
+
+### Data flow between nodes
+
+This is where changes in this repo go wrong. Three rules, each learned from a production bug.
+
+**1. `$('Node Name')` reach-back is position-dependent and fails silently.** It is not a global lookup. Whether it resolves depends on where the calling node sits relative to the referenced one, and when it fails you get an exception (caught → empty object) rather than a warning.
+
+Verified in single executions of the same workflow:
+
+- `$('Collect Thread Context').first()` returned nothing from `Compute Anchor Status` (execution `#1908` produced 0 items) — while in that *same* execution the sibling node `Add Success Reaction` resolved `$('Slack Message Trigger').first()` correctly.
+- `$('Parse AI Response').first()` *does* resolve from the `Verify * Delivery` nodes (`#1913` derived the right emoji through it).
+- On an error branch, `$('Slack Message Trigger')` resolves but `$('Build Azure Payload')` does not. The failure is per-node item pairing, not "error branches break `$()`".
+
+So: **prefer carrying a value forward on the item over reaching back for it.** `Parse AI Response` spreads `...ctx` into every item precisely so downstream nodes do not have to. When you must reach back, wrap it in `try/catch`, log, degrade — and prove it works by reading a real execution, not by reasoning about it.
+
+**2. `.first()` versus `.item`.** `.first()` returns item 0 of the referenced node, *not* the item paired with the current one. That is invisible while a node emits exactly one item and catastrophic the moment it emits several: `Send Success Card` held 19 `$('Parse AI Response').first()` references, so when one message produced three calendar events all three cards described event #1 while linking to three different events. Use `.item` for per-item correlation, or insert a Code node (`Pair Created Event`) that resolves the pairing once and merges the fields onto the item.
+
+**3. A node's mode decides how often it runs.** Everything downstream of a node that emits N items runs N times. `runOnceForEachItem` is correct for per-item correlation; `runOnceForAllItems` is correct for anything that should happen once per execution regardless of fan-out — for example `Compute Anchor Status`, because a thread has one status no matter how many events were created, and `reactions.*` is a Slack Tier 2 endpoint capped at 20 requests per minute.
 
 ### Expression Syntax
 
-- This repo writes expressions without optional chaining — the established pattern is `$json.field && $json.field.prop` (see `Send Error Notification`). Keep it consistent; the `.github/skills/n8n-expression-syntax` docs do not require `?.` either.
+- This repo writes expressions without optional chaining — the established pattern is `$json.field && $json.field.prop` (see `Send Error Card`). Keep it consistent; the `.github/skills/n8n-expression-syntax` docs do not require `?.` either.
 - Expression strings start with `=` in the JSON (`"text": "={{ $json.fallbackText }}"`). A value without the leading `=` is a literal.
 - Slack messages use `<url|text>` format for links (not Markdown `[text](url)`)
 - For timezone-aware formatting: `DateTime.fromISO(value).setZone('Asia/Taipei').toFormat(...)`
@@ -290,44 +370,84 @@ Target for new and reworked Code nodes:
 
 ## Cross-Node Contracts
 
-These conventions span multiple nodes and are the main thing to preserve when editing:
+These conventions span multiple nodes and are the main thing to preserve when editing. All of the following describes `SlackToGoogleCalendar`; the other three flows have none of it.
 
 ### Error routing
 
-In `SlackToGoogleCalendar`, the four nodes on the main path that can fail — `Analyze Message with AI`, `Create Calendar Event`, `Send Success Notification`, `Send Low Confidence Alert` — set `onError: "continueErrorOutput"` and wire their **second** `main` output (index 1) into one shared Slack `Send Error Notification` node. Terminal notification nodes (`Send No Event Reply`) and AI sub-nodes (`Azure OpenAI gpt-5.2`, connected over `ai_languageModel`) do not. When you add a fallible node to this flow's main path, wire its error output into the same sink rather than letting the execution die. The other three workflows have no error routing at all.
+Two different `onError` settings, used deliberately:
 
-### Slack Block Kit messages
+- **`continueErrorOutput`** on the eleven nodes whose failure means the request cannot continue — `Fetch Thread Replies`, `Collect Thread Context`, `Split Images`, `Build Azure Payload`, `Analyze With Azure`, `Parse AI Response`, `Create Calendar Event`, `Update Calendar Event`, and the three `Verify * Delivery` nodes. Their **second** `main` output (index 1) all converge on one `Normalize Error` → `Send Error Card` sink. Add a fallible node to the main path and wire it there too, rather than letting the execution die.
+- **`continueRegularOutput`** on every Slack-facing node (the six card senders, all reaction nodes, `Download Image`). A Slack hiccup must not abort a run that has already written to the calendar. The catch is that n8n then pushes `{ error: msg }` to the *regular* output, so the card senders are followed by a `Verify * Delivery` Code node that treats anything other than `ok === true` as failure. Without that, a failed card would pass silently.
 
-A Code node builds the blocks and returns them **as a JSON string**, plus a plain-text fallback:
+`Normalize Error` derives the failing stage from **`$prevNode.name`**, which is node-level metadata and does not depend on item pairing — an earlier version used `$()` reach-back and mislabelled every failure. If you rename or insert a node on the main path, update its stage map, including whether that stage implies the calendar was already written; otherwise the error card can tell a user to retry after events were created.
 
-```javascript
-return [{ json: { blocks: JSON.stringify(blocks), fallbackText: '✅ 日曆事件已成功建立！' } }];
+### Routing vocabulary
+
+`Route Outcome` is a Switch (v3.2) with eight outputs. The keys are the contract between `Parse AI Response` and everything after it:
+
+| Output | Key | Target |
+|---|---|---|
+| 0 | `suppress` | `Add Suppress Reaction` (➖, not a scheduling message) |
+| 1 | `not_owner` | `Send Not Owner Card` (🔒) |
+| 2 | `update` | `Update Calendar Event` |
+| 3 | `force` | `Create Calendar Event` (user said "just create it") |
+| 4 | `clarify` | `Send Clarify Card` (❓) |
+| 5 | `create` | `Create Calendar Event` |
+| 6 | `duplicate` | `Send Duplicate Notice` (♻) |
+| 7 | fallback | `Send Clarify Card` |
+
+Note outputs 3 and 5 share a target, so you cannot infer the branch from the destination node. The confidence threshold (`0.7`) now lives in **exactly one place**, on `Route Outcome`; keep it that way.
+
+Only `create` fans out to several items. `update` stays single, because an edit targets one existing calendar entry and fanning it out would multiply updates against the same event id. `MAX_EVENTS_PER_MESSAGE = 5` bounds a hallucinating model.
+
+### Slack cards
+
+Cards are **not** built by a Code node and **not** sent by the Slack node. Each `Send * Card` is an `httpRequest` node whose `jsonBody` is a single expression that builds the whole `chat.postMessage` payload inline — `attachments[0].blocks[]`, colour, and `metadata` — from `$json`:
+
+```
+"jsonBody": "={{ JSON.stringify({ channel: $json.channel, thread_ts: $json.threadTs, text: …,
+                metadata: { event_type: 'gcal_event_created', event_payload: { … } },
+                attachments: [{ color: '#2eb886', blocks: [ … ] }] }) }}"
 ```
 
-The Slack node then uses `messageType: "block"`, `blocksUi: "={{ $json.blocks }}"`, `text: "={{ $json.fallbackText }}"`. Keep the stringified form when editing these pairs — every Block Kit message in this repo uses it. Simple alerts skip the builder and use `messageType: "text"` with an inline expression.
+Read fields from `$json`, never `$('Parse AI Response').first()` — see [Data flow between nodes](#data-flow-between-nodes) for why that broke the multi-event case.
+
+**`metadata.event_payload` is the only state store in the whole system.** There is no database. `Collect Thread Context` reads `event_id` / `calendar_id` / `start` / `title` back off the bot's own earlier cards (filtered by `app_id`, so another app cannot forge them) to rebuild `ctx.allEvents`, which drives duplicate detection and update targeting. Break that field and the bot loses its memory: it re-creates events it already made, and edits the wrong meeting. `Fetch Thread Replies` must keep `include_all_metadata: true`.
+
+### Reaction lifecycle
+
+Two independent layers — do not merge them:
+
+- **Per-message**, on the message that triggered *this* turn: 👀 `eyes` on arrival, removed once parsing finishes, then the outcome (✅ `white_check_mark`, 🔄 `arrows_counterclockwise`, ➖ `heavy_minus_sign`, ⚠ `warning`, or a dynamic ❓/♻/🔒 from `Add Notice Reaction`).
+- **Per-thread**, on the thread's anchor (first) message: `Compute Anchor Status` → `Sync Anchor Reaction`, a single `httpRequest` whose URL is `reactions.{{ $json.op }}` because add and remove take identical parameters. The channel list only shows a thread's first message, so the anchor is the status board; stale outcomes are removed before the current one is added.
+
+The anchor mapping is deliberately not the identity: `duplicate` resolves to ✅ (it is only a duplicate because the event exists) and `not_owner` leaves the anchor untouched, so a stranger cannot rewrite a thread's status. `Add Suppress Reaction` is intentionally not wired into the anchor sync — saying "thanks" in a resolved thread must not erase its ✅.
 
 ### AI analysis chain
 
-`chainLlm` (prompt) + `lmChatAzureOpenAi` (model) connected over the `ai_languageModel` port, then a Code node parses the output:
+`chainLlm` v1.9 (prompt) + `lmChatAzureOpenAi` v1 (model) over the `ai_languageModel` port, then `Parse AI Response` parses the output.
 
-- The prompt injects "now" via `{{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy年MM月dd日 (cccc)', { locale: 'zh-TW' }) }}` and demands raw JSON with no surrounding prose.
-- The parser still strips fences defensively: `text.replace(/```json\n?|```\n?/g, '').trim()` before `JSON.parse`, because the model does not always comply.
-- Model output flows through a status vocabulary the IF nodes switch on: `error`, `no_event`, `high_confidence`, `low_confidence`, with a numeric `confidence`.
-- **The 0.7 confidence threshold is duplicated in two places**: the ternary that sets `status` in `Parse AI Response`, and `rightValue: 0.7` on the `Check Confidence Score` IF node. Changing one without the other makes the status field and the routing disagree.
+- **Use the LangChain node pair, not `httpRequest` + `predefinedCredentialType`.** The Azure credential is `azureEntraCognitiveServicesOAuth2Api` minting tokens with `grant_type: client_credentials`, which returns no refresh token; n8n's generic OAuth2 helper (used by `httpRequest`) can then only fail once the access token expires. `lmChatAzureOpenAi` acquires its own token and is unaffected. This was proven side by side with the same credential in the same minute.
+- Images reach the model only through **static** `messages.messageValues` slots. Making the whole `messages` parameter an expression runs without error but the images never arrive, and an empty slot makes the node fail outright. `Build Azure Payload` therefore always emits four slots, padding unused ones with a 1×1 transparent PNG and instructing the model to ignore blanks.
+- The prompt injects "now" via `{{ DateTime.now().setZone('Asia/Taipei').toFormat('yyyy年MM月dd日 (cccc)', { locale: 'zh-TW' }) }}` and demands raw JSON. The parser still strips fences defensively — `text.replace(/```json\n?|```\n?/g, '').trim()` — because the model does not always comply.
+- `Parse AI Response` reads `$json.text` (the chain's output) and keeps the old `choices[0].message.content` shape as a fallback.
 
-If you change the prompt's JSON shape, update the parser, the IF conditions, and the block builders in the same change.
+If you change the prompt's JSON shape, update the parser, the `Route Outcome` conditions and the card builders in the same change.
 
 ## Validation & Sync
 
 ### Workflow Validation Checklist
 
 After every change:
-1. MCP validate with `profile: "strict"`
-2. Check `errorCount` = 0 (ignore `"Cannot return primitive values directly"` — MCP static analysis false positive for Code nodes)
+1. Validate with the MCP `validate_workflow` tool, `profile: "strict"`, passing the workflow JSON
+2. Check `errorCount` = 0 (ignore `"Cannot return primitive values directly"` — a static-analysis false positive for Code nodes)
 3. Check `invalidConnections` = 0
-4. Verify `validConnections` matches expected count
+4. Verify `totalNodes` and `validConnections` match what you expect — currently **37 / 54** for `SlackToGoogleCalendar`. A number that moved when you did not add or remove anything means the update did more than you intended
 5. Sync cloud → local JSON, then run the [structural check](#local-checks)
-6. Trigger the workflow on the live instance and read the execution — for `SlackToGoogleCalendar` that means posting real Slack test messages (all-day event, timed event, non-schedule message); for the scheduled flows it means a manual execution
+6. Exercise it on the live instance and read the execution — see [Exercising a workflow](#exercising-a-workflow). Cover more than the happy path: for `SlackToGoogleCalendar`, at minimum a single-event message, a multi-event message, a follow-up turn in an existing thread, and a message from someone who is not the thread owner
+7. Check the git diff shape before committing: a workflow change should touch only the `jsCode`/`jsonBody` strings you edited, any nodes you added, their connections, and `versionId`. Hundreds of reordered lines means the export was rebuilt wrong
+
+One MCP validator quirk worth knowing: it flags nodes whose **names** carry failure semantics when they share a `main[0]` with other nodes. Restructuring will not clear it; renaming will (`Add Error Reaction` → `Add Alert Reaction` did). Do not contort the graph to satisfy it.
 
 ### Cloud ↔ Local Sync
 
@@ -370,7 +490,7 @@ Workflow JSON references credentials by `{ id, name }` only (e.g. `"slackApi": {
 
 `.mcp.json` is committed and may never contain a literal key — this repo is public.
 
-- `.mcp.json` (Copilot CLI): `"N8N_API_KEY": "${N8N_API_KEY}"` inside a stdio server's `env` block. **Verify this actually resolves before relying on it.** Searching the CLI bundle (1.0.73) for placeholder-expansion logic found none, and an unexpanded `${...}` is transmitted literally. The failure is silent in the worst way: the server starts and its tools appear normally, and only the tool *call* fails with an auth error. If n8n MCP tools start returning auth failures, check this first.
+- `.mcp.json` (Copilot CLI): `"N8N_API_KEY": "${N8N_API_KEY}"` inside a stdio server's `env` block. **This placeholder is confirmed not to expand** (verified 2026-07-31) — the literal string is sent as the key, so every n8n management tool returns `AUTHENTICATION_ERROR` while `n8n_health_check` still claims `"connected": true`. Keep the placeholder — the key must never be committed to this public repo — and supply the real value through the environment instead. See [Talking to the instance](#talking-to-the-instance).
 - There is intentionally **no** `.vscode/mcp.json`. It was removed on 2026-07-29; every server it declared was already present in `.mcp.json`, so it only added a second copy to keep in sync. Do not recreate it unless asked.
 
 `context7` needs no key at all. It is an HTTP server pointed at `https://mcp.context7.com/mcp/oauth`, which authenticates via MCP OAuth — browser consent on first connection, tokens cached under `~/.copilot/mcp-oauth-config`. Two things worth knowing if it misbehaves:
@@ -395,9 +515,9 @@ Commit scope is the workflow folder name (`feat(SlackToGoogleCalendar): ...`); u
 
 A workflow change is not finished when the JSON is synced. These are requirements going forward, not a description of how tidy the repo currently is:
 
-- If the flow has `README.md` / `README.zh-tw.md`, update **both**, and run the doc-drift check in [Local Checks](#local-checks) before you call the change done. `flows/SlackToGoogleCalendar/` was rewritten from its JSON in 1.0.4 and now passes 14/14 in both languages — keep it that way instead of letting it rot again.
-- Add a `CHANGELOG.md` entry under a semver heading (`## [1.0.4] - YYYY-MM-DD`) with subsections matching the existing style (`### Enhancements` / `### Fixes` / `### Documentation`).
-- The root `README.md` lists workflows; it currently documents only two of the four, so add yours if you create a new flow.
+- If the flow has `README.md` / `README.zh-tw.md`, update **both**, and run the doc-drift check in [Local Checks](#local-checks) before you call the change done. `flows/SlackToGoogleCalendar/`'s pair is **generated from the live workflow** rather than hand-edited, which is why it holds at 37/37 in both languages; regenerate rather than patching by hand, and add any new node to the generator's node grouping or it will refuse to run.
+- Add a `CHANGELOG.md` entry under a semver heading (`## [1.0.9] - YYYY-MM-DD`) with subsections matching the existing style (`### Fixes` / `### Enhancements` / `### Documentation` / `### Verification`). The house style records the *evidence* — execution numbers, what was measured versus inferred — not just what changed.
+- The root `README.md` lists workflows; it currently documents only two of the four and was last touched 2025-05-29, so add yours if you create a new flow.
 
 ## Skills Reference
 
