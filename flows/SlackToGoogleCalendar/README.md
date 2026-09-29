@@ -72,6 +72,8 @@ One Switch decides the outcome. Order matters: forced creation is evaluated befo
 
 Creation and update are separate nodes so an update can never accidentally create a second event.
 
+Flight departure and arrival are interpreted as **separate local wall times** using their own IANA `startTimeZone` and `endTimeZone`, not a shared `+08:00` offset. The parser resolves both to offset-bearing instants before the unchanged Calendar nodes run. If a timed flight lacks a zone or arrival time, has an invalid local time, or appears longer than 20 hours, it asks for clarification rather than guessing. An ordinary meeting with a naive end time can inherit its start zone; all-day dates do not use the flight duration guard. Success and update cards retain both zones in Slack metadata so a later partial update can reuse the unchanged endpoint. A partial update without a new description does not replace the existing Calendar description.
+
 | Node | Type | onError | Outputs |
 |---|---|---|---|
 | `Create Calendar Event` | `googleCalendar` v1.3 | continueErrorOutput | 0→Pair Created Event<br>1→Normalize Error |
