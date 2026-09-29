@@ -13,6 +13,7 @@
 ### Verification
 - The staged workflow passed 25 offline timezone regressions, including CI 0008 and CI 0023, DST gaps and overlaps, partial updates, all-day flight wording, and flight-number false positives. `n8n-mcp` strict validation reported 37 nodes, 54 valid connections, 0 invalid connections, and 0 errors (34 warnings). The guarded Public API update and targeted follow-up were read back from active workflow `I2dch7ZKvBvX6GVC` with version `d0cbc0a9-ab8b-45a5-bd3d-c01e63a83e8c`.
 - A temporary credential-free webhook → Code → deployed parser workflow ran on the live n8n JS runner. Both flight endpoints resolved to the expected instants; a single-zone LA meeting inherited its end zone; an implausible flight and a DST gap requested clarification; an all-day deadline remained valid; and an arrival-only update preserved the original departure without supplying a replacement description. The probe was deactivated and removed. This isolates parser behavior; it does **not** prove a full Slack → Azure → Google Calendar execution.
+- A second isolated live workflow ran the deployed `Build Azure Payload` → `Analyze With Azure` (using the existing Azure credential) → `Parse AI Response` chain. The actual model returned **two** events with independent `Asia/Taipei` and `America/Los_Angeles` zones; both CI 0008 and CI 0023 matched the expected departure and arrival instants. That probe was removed too. No Slack card or Google Calendar event was written during these isolated tests; the unchanged calendar-write path was not executed.
 
 ## [1.0.9] - 2026-07-31
 
