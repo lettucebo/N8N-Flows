@@ -72,6 +72,8 @@ Slack 訊息進來，先濾掉明顯不需要處理的，然後**立刻**加上 
 
 建立與更新是兩個獨立節點，因此更新永遠不可能誤建第二筆事件。
 
+航班出發與抵達各自是**當地時間**，分別以 IANA `startTimeZone`、`endTimeZone` 解析，不能共用 `+08:00`。解析節點先轉成帶 offset 的時間點，既有 Calendar 節點不變。定時航班缺少時區或抵達時間、當地時間不存在，或推算飛行超過 20 小時時，會要求澄清而不猜測。一般會議的無 offset 結束時間可繼承開始時區；全天日期不套用航班時長限制。建立／更新卡片的 Slack metadata 保留兩端時區，供後續只改一端時間時沿用；未提供新描述的部分更新不會覆寫原有日曆備註。
+
 | 節點 | 型別 | onError | 輸出 |
 |---|---|---|---|
 | `Create Calendar Event` | `googleCalendar` v1.3 | continueErrorOutput | 0→Pair Created Event<br>1→Normalize Error |
